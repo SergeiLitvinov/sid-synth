@@ -253,6 +253,7 @@ const NOTES = {
       path.addEventListener('mouseenter', () => {
         path.setAttribute('stroke', '#ff4444');
         path.setAttribute('stroke-width', '3');
+        selectedCableIndex = index;
         // Show delete circle with X
         showCableDeleteUI(path, index, x1, y1, x2, y2);
       });
@@ -323,8 +324,9 @@ const NOTES = {
   }
 
   function deleteConnection(index) {
-    if (isNaN(index) || index < 0 || index >= connections.length) return;
-    const conn = connections[index];
+    const idx = typeof index === 'string' ? parseInt(index) : index;
+    if (isNaN(idx) || idx < 0 || idx >= connections.length) return;
+    const conn = connections[idx];
     
     // Disconnect audio
     const fromComp = components[conn.from];
