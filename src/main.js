@@ -112,7 +112,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     components[newId] = comp;
     rack.appendChild(comp.element);
     comp.element.style.left = Math.max(0, x - 100) + 'px';
-    comp.element.style.top = Math.max(0, y - 30) + 'px';
+    comp.element.style.top = Math.max(0, y - 60) + 'px';
     makeDraggable(comp.element);
     labelConnections();
   }
