@@ -253,10 +253,13 @@ const NOTES = {
       path.addEventListener('mouseenter', () => {
         path.setAttribute('stroke', '#ff4444');
         path.setAttribute('stroke-width', '3');
+        // Show delete circle with X
+        showCableDeleteUI(path, index, x1, y1, x2, y2);
       });
       path.addEventListener('mouseleave', () => {
         path.setAttribute('stroke', '#4af74a');
         path.setAttribute('stroke-width', '2');
+        hideCableDeleteUI();
       });
       svgEl.appendChild(path);
       
@@ -270,6 +273,30 @@ const NOTES = {
     });
   }
   
+  let cableDeleteUI = null;
+  
+  function showCableDeleteUI(path, index, x1, y1, x2, y2) {
+    hideCableDeleteUI();
+    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', 10);
+    circle.setAttribute('fill', '#ff4444');
+    circle.setAttribute('opacity', '0.8');
+    circle.style.cursor = 'pointer';
+    circle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteConnection(index);
+    });
+    svgEl.appendChild(circle);
+    cableDeleteUI = circle;
+  }
+  
+  function hideCableDeleteUI() {
+    if (cableDeleteUI) { cableDeleteUI.remove(); cableDeleteUI = null; }
+  }
+
   function deleteConnection(index) {
     if (isNaN(index) || index < 0 || index >= connections.length) return;
     const conn = connections[index];
@@ -288,6 +315,8 @@ const NOTES = {
     }
     
     connections.splice(index, 1);
+    selectedCableIndex = null;
+    hideCableDeleteUI();
     drawConnections();
   }
 
@@ -386,34 +415,49 @@ const NOTES = {
       }
     });
     
-    // Temp line for active connection
-    document.addEventListener('mousemove', e => {
-      if (!currentConnectionFrom) return;
-      if (tempLine) tempLine.remove();
-      
-      const rackRect = rack.getBoundingClientRect();
-      const fromComp = components[currentConnectionFrom.id];
-      if (!fromComp) return;
-      const fromOutput = fromComp.element.querySelector('[data-type="output"]');
-      if (!fromOutput) return;
-      
-      const r1 = fromOutput.getBoundingClientRect();
-      const x1 = r1.left - rackRect.left + r1.width/2;
-      const y1 = r1.top - rackRect.top + r1.height/2;
-      const x2 = e.clientX - rackRect.left;
-      const y2 = e.clientY - rackRect.top;
-      
-      const cx = (x1 + x2) / 2;
-      tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      tempLine.setAttribute('d', `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`);
-      tempLine.setAttribute('fill', 'none');
-      tempLine.setAttribute('stroke', '#4af74a');
-      tempLine.setAttribute('stroke-width', '2');
-      tempLine.setAttribute('opacity', '0.4');
-      tempLine.setAttribute('stroke-dasharray', '5,5');
-      svgEl.appendChild(tempLine);
-    });
-  }
+  // Temp line for active connection
+  document.addEventListener('mousemove', e => {
+    if (!currentConnectionFrom) return;
+    if (tempLine) tempLine.remove();
+    
+    const rackRect = rack.getBoundingClientRect();
+    const fromComp = components[currentConnectionFrom.id];
+    if (!fromComp) return;
+    const fromOutput = fromComp.element.querySelector('[data-type="output"]');
+    if (!fromOutput) return;
+    
+    const r1 = fromOutput.getBoundingClientRect();
+    const x1 = r1.left - rackRect.left + r1.width/2;
+    const y1 = r1.top - rackRect.top + r1.height/2;
+    const x2 = e.clientX - rackRect.left;
+    const y2 = e.clientY - rackRect.top;
+    
+    const cx = (x1 + x2) / 2;
+    tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    tempLine.setAttribute('d', `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`);
+    tempLine.setAttribute('fill', 'none');
+    tempLine.setAttribute('stroke', '#4af74a');
+    tempLine.setAttribute('stroke-width', '2');
+    tempLine.setAttribute('opacity', '0.4');
+    tempLine.setAttribute('stroke-dasharray', '5,5');
+    svgEl.appendChild(tempLine);
+  });
+
+  // ESC to cancel connection, DEL to delete selected cable
+  let selectedCableIndex = null;
+  
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && currentConnectionFrom) {
+      currentConnectionFrom.port.style.background = '';
+      currentConnectionFrom = null;
+      if (tempLine) { tempLine.remove(); tempLine = null; }
+    }
+    if (e.key === 'Delete' && selectedCableIndex !== null) {
+      deleteConnection(selectedCableIndex);
+      selectedCableIndex = null;
+    }
+  });
+}
 
   function addConnection(fromId, toId) {
     if (fromId === toId) return;
