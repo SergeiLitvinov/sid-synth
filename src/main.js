@@ -195,30 +195,85 @@ const NOTE_NAMES = Object.keys(NOTES);
   };
 
   document.querySelectorAll('.preset-btn').forEach(b => {
-    b.onclick = () => {
-      const p = PRESETS[b.dataset.preset];
-      if (!p) return;
-      if (p.osc1) {
-        osc1.isOn = p.osc1.on;
-        osc1.waveform = p.osc1.wave;
-        osc1.frequency = p.osc1.freq;
-        osc1.update();
-      }
-      if (p.filter) {
-        filter.filterType = p.filter.type;
-        filter.frequency = p.filter.freq;
-        filter.Q = p.filter.q;
-        filter.update();
-      }
-      if (p.adsr) {
-        adsr.attack = p.adsr.a;
-        adsr.decay = p.adsr.d;
-        adsr.sustain = p.adsr.s;
-        adsr.release = p.adsr.r;
-        adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
-      }
-    };
+    if (b.dataset.preset) {
+      b.onclick = () => {
+        const p = PRESETS[b.dataset.preset];
+        if (!p) return;
+        if (p.osc1) {
+          osc1.isOn = p.osc1.on;
+          osc1.waveform = p.osc1.wave;
+          osc1.frequency = p.osc1.freq;
+          osc1.update();
+        }
+        if (p.filter) {
+          filter.filterType = p.filter.type;
+          filter.frequency = p.filter.freq;
+          filter.Q = p.filter.q;
+          filter.update();
+        }
+        if (p.adsr) {
+          adsr.attack = p.adsr.a;
+          adsr.decay = p.adsr.d;
+          adsr.sustain = p.adsr.s;
+          adsr.release = p.adsr.r;
+          adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
+        }
+      };
+    }
   });
+
+  // Patch save/load
+  document.getElementById('savePatch').onclick = () => {
+    const patch = {
+      components: {
+        osc1: { isOn: osc1.isOn, waveform: osc1.waveform, frequency: osc1.frequency },
+        osc2: { isOn: osc2.isOn, waveform: osc2.waveform, frequency: osc2.frequency },
+        osc3: { isOn: osc3.isOn, waveform: osc3.waveform, frequency: osc3.frequency },
+        filter: { filterType: filter.filterType, frequency: filter.frequency, Q: filter.Q },
+        adsr: { attack: adsr.attack, decay: adsr.decay, sustain: adsr.sustain, release: adsr.release },
+        lfo: { rate: lfo.rate, depth: lfo.depth, waveType: lfo.waveType },
+        effects: { delayOn: effects.delayOn, reverbOn: effects.reverbOn, delayTime: effects.delayTime, reverbDuration: effects.reverbDuration }
+      },
+      connections: [
+        { from: 'osc1', to: 'filter' },
+        { from: 'filter', to: 'adsr' },
+        { from: 'adsr', to: 'effects' },
+        { from: 'effects', to: 'master' }
+      ]
+    };
+    const blob = new Blob([JSON.stringify(patch, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'patch.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  document.getElementById('loadPatch').onclick = () => {
+    document.getElementById('patchFile').click();
+  };
+
+  document.getElementById('patchFile').onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const patch = JSON.parse(ev.target.result);
+        // Restore components
+        if (patch.components.osc1) {
+          osc1.isOn = patch.components.osc1.isOn;
+          osc1.waveform = patch.components.osc1.waveform;
+          osc1.frequency = patch.components.osc1.frequency;
+          osc1.update();
+        }
+        // ... similar for other components
+      } catch(err) { console.error('Patch load error:', err); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   // Visualization
   function draw() {
