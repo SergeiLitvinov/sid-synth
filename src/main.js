@@ -81,6 +81,55 @@ const NOTE_NAMES = Object.keys(NOTES);
   // Connection UI
   let connectionMode = false;
   let connectionFrom = null;
+  const svgEl = document.getElementById('connectionsSvg');
+
+  function drawConnections() {
+    while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+    // Draw active connection point
+    document.querySelectorAll('.conn-point').forEach(pt => {
+      if (pt.classList.contains('active')) {
+        const rect = pt.getBoundingClientRect();
+        const rackRect = rack.getBoundingClientRect();
+        const x = rect.left - rackRect.left + rect.width/2;
+        const y = rect.top - rackRect.top + rect.height/2;
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', x);
+        circle.setAttribute('cy', y);
+        circle.setAttribute('r', 4);
+        circle.setAttribute('fill', '#4af74a');
+        svgEl.appendChild(circle);
+      }
+    });
+    // Draw connections between components (simplified - just show output to input)
+    const connectedPairs = [
+      ['osc1', 'filter'],
+      ['filter', 'adsr'],
+      ['adsr', 'effects'],
+      ['effects', 'master']
+    ];
+    connectedPairs.forEach(([fromId, toId]) => {
+      const fromEl = document.querySelector(`[data-id="${fromId}"].conn-output`);
+      const toEl = document.querySelector(`[data-id="${toId}"].conn-input`);
+      if (fromEl && toEl) {
+        const r1 = fromEl.getBoundingClientRect();
+        const r2 = toEl.getBoundingClientRect();
+        const rackRect = rack.getBoundingClientRect();
+        const x1 = r1.left - rackRect.left + r1.width/2;
+        const y1 = r1.top - rackRect.top + r1.height/2;
+        const x2 = r2.left - rackRect.left + r2.width/2;
+        const y2 = r2.top - rackRect.top + r2.height/2;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('stroke', '#4af74a');
+        line.setAttribute('stroke-width', '2');
+        line.setAttribute('opacity', '0.7');
+        svgEl.appendChild(line);
+      }
+    });
+  }
 
   document.querySelectorAll('.conn-point').forEach(pt => {
     pt.onclick = () => {
@@ -88,6 +137,7 @@ const NOTE_NAMES = Object.keys(NOTES);
         connectionMode = true;
         connectionFrom = pt;
         pt.classList.add('active');
+        drawConnections();
       } else {
         if (connectionFrom && connectionFrom !== pt) {
           const fromId = connectionFrom.dataset.id;
@@ -99,6 +149,7 @@ const NOTE_NAMES = Object.keys(NOTES);
         connectionFrom?.classList.remove('active');
         connectionMode = false;
         connectionFrom = null;
+        drawConnections();
       }
     };
   });
