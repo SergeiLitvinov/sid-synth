@@ -124,8 +124,9 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     el.addEventListener('mousedown', e => {
       if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg')) return;
       isDragging = true;
-      startX = e.clientX - el.offsetLeft;
-      startY = e.clientY - el.offsetTop;
+      const rect = el.getBoundingClientRect();
+      startX = e.clientX - rect.left;
+      startY = e.clientY - rect.top;
       el.style.zIndex = 1000;
       e.preventDefault();
     });

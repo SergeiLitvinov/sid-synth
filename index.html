@@ -17,6 +17,27 @@
     </div>
 
     <div class="keyboard" id="keyboard"></div>
+    
+    <div class="panel preset-panel">
+      <div class="panel-title">PRESETS</div>
+      <div class="row row-center">
+        <button class="preset-btn" data-preset="bass">BASS</button>
+        <button class="preset-btn" data-preset="lead">LEAD</button>
+        <button class="preset-btn" data-preset="pad">PAD</button>
+        <button class="preset-btn" data-preset="drum">DRUM</button>
+      </div>
+      <div class="row row-center" style="margin-top:8px">
+        <button class="preset-btn" id="savePreset">SAVE</button>
+        <button class="preset-btn" id="loadPreset">LOAD</button>
+        <button class="preset-btn" id="deletePreset">DEL</button>
+        <select id="presetList" style="width:120px;font-size:12px;"></select>
+      </div>
+      <div class="row row-center" style="margin-top:8px">
+        <button class="preset-btn" id="savePatch">SAVE PATCH</button>
+        <button class="preset-btn" id="loadPatch">LOAD PATCH</button>
+        <input type="file" id="patchFile" accept=".json" style="display:none">
+      </div>
+    </div>
 
     <div class="workspace">
       <div class="tool-bar" id="tool-bar">
@@ -34,26 +55,6 @@
       </div>
       <div class="rack" id="rack">
         <svg class="connection-line" id="connectionsSvg"></svg>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="row row-center">
-        <button class="preset-btn" data-preset="bass">BASS</button>
-        <button class="preset-btn" data-preset="lead">LEAD</button>
-        <button class="preset-btn" data-preset="pad">PAD</button>
-        <button class="preset-btn" data-preset="drum">DRUM</button>
-      </div>
-      <div class="row row-center" style="margin-top:6px">
-        <button class="preset-btn" id="savePreset">SAVE</button>
-        <button class="preset-btn" id="loadPreset">LOAD</button>
-        <button class="preset-btn" id="deletePreset">DEL</button>
-        <select id="presetList" style="width:100px"></select>
-      </div>
-      <div class="row row-center" style="margin-top:6px">
-        <button class="preset-btn" id="savePatch">SAVE PATCH</button>
-        <button class="preset-btn" id="loadPatch">LOAD PATCH</button>
-        <input type="file" id="patchFile" accept=".json" style="display:none">
       </div>
     </div>
 
