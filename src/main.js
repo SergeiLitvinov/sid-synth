@@ -433,10 +433,16 @@ const NOTE_NAMES = Object.keys(NOTES);
     document.getElementById('midiStatus').textContent = 'MIDI: NOT SUPPORTED';
   }
 
+  function midiNoteToName(midiNote) {
+    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const octave = Math.floor(midiNote / 12) - 1;
+    const name = names[midiNote % 12];
+    return name + octave;
+  }
+
   function handleMidiMessage(event) {
     const [cmd, note, vel] = event.data;
-    const noteName = Object.keys(NOTES).find(n => Math.abs(NOTES[n] - 440 * Math.pow(2, (note - 69) / 12)) < 1);
-    if (!noteName) return;
+    const noteName = midiNoteToName(note);
 
     if (cmd === 144 && vel > 0) { // Note on
       if (ctx.state === 'suspended') ctx.resume();
