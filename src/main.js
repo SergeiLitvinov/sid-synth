@@ -42,6 +42,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   masterGain.connect(analyserFreq);
 
   const rack = document.getElementById('rack');
+  const svgEl = document.getElementById('connectionsSvg');
   const components = {};
   let componentId = 0;
 
@@ -69,8 +70,9 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     rack.style.borderColor = '#1a2a1a';
     const type = e.dataTransfer.getData('type');
     const id = e.dataTransfer.getData('id');
-    const x = e.clientX - rack.getBoundingClientRect().left;
-    const y = e.clientY - rack.getBoundingClientRect().top;
+    const rect = rack.getBoundingClientRect();
+    const x = e.clientX - rect.left - 100;
+    const y = e.clientY - rect.top - 30;
     createComponent(type, id, x, y);
   });
 
@@ -109,8 +111,8 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     
     components[newId] = comp;
     rack.appendChild(comp.element);
-    comp.element.style.left = (x - 100) + 'px';
-    comp.element.style.top = (y - 60) + 'px';
+    comp.element.style.left = Math.max(0, x) + 'px';
+    comp.element.style.top = Math.max(0, y) + 'px';
     makeDraggable(comp.element);
   }
 
@@ -149,37 +151,71 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   }
 
   function drawConnections() {
-    const svgEl = document.getElementById('connectionsSvg');
     while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
     
-    // Draw active connection point
-    document.querySelectorAll('.conn-point').forEach(pt => {
-      if (pt.classList.contains('active')) {
-        const rect = pt.getBoundingClientRect();
+    // Draw connections between connected components
+    Object.keys(components).forEach(fromId => {
+      const fromComp = components[fromId];
+      if (!fromComp || !fromComp.element) return;
+      
+      const fromOutput = fromComp.element.querySelector('[data-type="output"]');
+      if (!fromOutput) return;
+      
+      // Find components connected to this output
+      Object.keys(components).forEach(toId => {
+        if (toId === fromId) return;
+        const toComp = components[toId];
+        if (!toComp || !toComp.element) return;
+        
+        const toInput = toComp.element.querySelector('[data-type="input"]');
+        if (!toInput) return;
+        
+        // Check if connected (simplified - just draw if both exist)
+        const r1 = fromOutput.getBoundingClientRect();
+        const r2 = toInput.getBoundingClientRect();
         const rackRect = rack.getBoundingClientRect();
-        const x = rect.left - rackRect.left + rect.width/2;
-        const y = rect.top - rackRect.top + rect.height/2;
-        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', x);
-        circle.setAttribute('cy', y);
-        circle.setAttribute('r', 4);
-        circle.setAttribute('fill', '#4af74a');
-        svgEl.appendChild(circle);
-      }
+        
+        const x1 = r1.left - rackRect.left + r1.width/2;
+        const y1 = r1.top - rackRect.top + r1.height/2;
+        const x2 = r2.left - rackRect.left + r2.width/2;
+        const y2 = r2.top - rackRect.top + r2.height/2;
+        
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('stroke', '#4af74a');
+        line.setAttribute('stroke-width', '2');
+        line.setAttribute('opacity', '0.7');
+        svgEl.appendChild(line);
+      });
     });
   }
 
-  // Default connection: osc1 -> filter -> adsr -> effects -> master
-  // (if components exist)
-  function setupDefaultConnection() {
-    if (components.osc1 && components.filter && components.adsr && components.effects) {
+  // Create default components
+  createComponent('oscillator', 'osc1', 50, 50);
+  createComponent('filter', 'filter', 270, 50);
+  createComponent('adsr', 'adsr', 490, 50);
+  createComponent('effects', 'effects', 50, 220);
+  
+  // Connect default chain: osc1 -> filter -> adsr -> effects -> master
+  setTimeout(() => {
+    if (components.osc1 && components.filter) {
       components.osc1.connect(components.filter);
       components.filter.connectInput(components.osc1);
+    }
+    if (components.filter && components.adsr) {
       components.adsr.connectInput(components.filter);
+    }
+    if (components.adsr && components.effects) {
       components.effects.connectInput(components.adsr);
+    }
+    if (components.effects) {
       components.effects.connect({ node: masterGain });
     }
-  }
+    drawConnections();
+  }, 100);
 
   // Keyboard
   const kb = document.getElementById('keyboard');
@@ -256,11 +292,4 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     }
   }
   draw();
-
-  // Create default components for testing
-  createComponent('oscillator', 'osc1', 50, 50);
-  createComponent('filter', 'filter', 270, 50);
-  createComponent('adsr', 'adsr', 490, 50);
-  createComponent('effects', 'effects', 50, 220);
-  setupDefaultConnection();
 })();
