@@ -20,12 +20,9 @@ export class OscillatorComponent extends AudioComponent {
     this.waveform = 'sawtooth';
     this.frequency = 440;
     this.isOn = true;
-    this.inputGain = ctx.createGain();
     this.outputGain = ctx.createGain();
     this.outputGain.gain.value = 0; // Start silent
-    this.inputGain.connect(this.outputGain);
-    this.node = this.outputGain;
-    this.oscNode = null;
+    this.node = null;
     this.freqKnob = null;
     this.element = this.createElement();
     this.update();
@@ -77,30 +74,29 @@ export class OscillatorComponent extends AudioComponent {
 
   update() {
     if (!this.isOn) {
-      if (this.oscNode) {
-        try { this.oscNode.stop(); } catch(e) {}
-        this.oscNode.disconnect();
-        this.oscNode = null;
+      if (this.node) {
+        try { this.node.stop(); } catch(e) {}
+        this.node.disconnect();
+        this.node = null;
       }
       this.outputGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
       return;
     }
-    if (this.oscNode) {
-      try { this.oscNode.stop(); } catch(e) {}
-      this.oscNode.disconnect();
+    if (this.node) {
+      try { this.node.stop(); } catch(e) {}
+      this.node.disconnect();
     }
-    this.oscNode = createOsc(this.waveform, this.ctx, this.frequency);
-    this.oscNode.connect(this.outputGain);
-    try { this.oscNode.start(); } catch(e) {}
+    this.node = createOsc(this.waveform, this.ctx, this.frequency);
+    this.node.connect(this.outputGain);
+    try { this.node.start(); } catch(e) {}
   }
 
   dispose() {
-    if (this.oscNode) {
-      try { this.oscNode.stop(); } catch(e) {}
-      this.oscNode.disconnect();
-      this.oscNode = null;
+    if (this.node) {
+      try { this.node.stop(); } catch(e) {}
+      this.node.disconnect();
+      this.node = null;
     }
-    this.inputGain.disconnect();
     this.outputGain.disconnect();
     this.isConnected = false;
   }

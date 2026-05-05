@@ -86,7 +86,7 @@ const NOTES = {
     
     switch(type) {
       case 'oscillator':
-        comp = new OscillatorComponent(ctx, id ? parseInt(id.replace('osc', '')) : 1);
+        comp = new OscillatorComponent(ctx, id ? (parseInt(id.replace('osc', '')) || 1) : 1);
         break;
       case 'filter':
         comp = new FilterComponent(ctx);
@@ -180,6 +180,7 @@ const NOTES = {
         el.style.zIndex = '';
         isDragging = false;
         if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
+        dragState = null;
         drawConnections();
       }
     });
@@ -481,4 +482,37 @@ const NOTES = {
     }
   }
   draw();
+
+  // MIDI Support
+  const midiBtn = document.getElementById('midiConnect');
+  const midiStatus = document.getElementById('midiStatus');
+  
+  if (midiBtn && navigator.requestMIDIAccess) {
+    midiBtn.addEventListener('click', async () => {
+      try {
+        const midi = await navigator.requestMIDIAccess();
+        midiStatus.textContent = 'MIDI OK';
+        midiStatus.style.color = '#4af74a';
+        
+        midi.inputs.forEach(input => {
+          input.onmidimessage = (msg) => {
+            const [cmd, note, vel] = msg.data;
+            if (cmd === 144 && vel > 0) { // Note on
+              if (ctx.state === 'suspended') ctx.resume();
+              const noteName = Object.keys(NOTES).find(n => Math.round(NOTES[n]) === Math.round(440 * Math.pow(2, (note - 69) / 12)));
+              if (noteName) playNote(noteName);
+            } else if (cmd === 128 || (cmd === 144 && vel === 0)) { // Note off
+              stopAll();
+            }
+          };
+        });
+      } catch(e) {
+        midiStatus.textContent = 'MIDI ERR';
+        midiStatus.style.color = '#ff4444';
+      }
+    });
+  } else if (midiBtn) {
+    midiBtn.disabled = true;
+    midiStatus.textContent = 'NO MIDI';
+  }
 })();
