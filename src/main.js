@@ -9,7 +9,11 @@ import { SequencerComponent } from './components/SequencerComponent.js';
 
 console.log('SID Synth Modular loaded');
 
-const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.63, 'F': 349.23, 'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88 };
+const NOTES = { 
+  'C2': 65.41, 'C#2': 69.30, 'D2': 73.42, 'D#2': 77.78, 'E2': 82.41, 'F2': 87.31, 'F#2': 92.50, 'G2': 98.00, 'G#2': 103.83, 'A2': 110.00, 'A#2': 116.54, 'B2': 123.47,
+  'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81, 'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00, 'A#3': 233.08, 'B3': 246.94,
+  'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88 
+};
 
 (async () => {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -178,9 +182,8 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
         const x2 = r2.left - rackRect.left + r2.width/2;
         const y2 = r2.top - rackRect.top + r2.height/2;
         
-        // Draw smooth curve
-        const cx = (x1 + x2) / 2;
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const cx = (x1 + x2) / 2;
         const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
         path.setAttribute('d', d);
         path.setAttribute('fill', 'none');
@@ -189,7 +192,6 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
         path.setAttribute('opacity', '0.7');
         svgEl.appendChild(path);
         
-        // Label
         const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         label.setAttribute('x', (x1 + x2) / 2);
         label.setAttribute('y', (y1 + y2) / 2 - 5);
@@ -259,10 +261,44 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     isPlaying = false;
   }
 
-  document.getElementById('play').onclick = () => {
-    if (ctx.state === 'suspended') ctx.resume();
-    playNote('C');
+  // Presets
+  const PRESETS = {
+    bass: { osc1: { on: true, wave: 'sawtooth', freq: 110 }, filter: { type: 'lowpass', freq: 800, q: 5 }, adsr: { a: 0.01, d: 0.2, s: 0.4, r: 0.1 } },
+    lead: { osc1: { on: true, wave: 'square', freq: 440 }, filter: { type: 'lowpass', freq: 3000, q: 2 }, adsr: { a: 0.05, d: 0.1, s: 0.7, r: 0.2 } },
+    pad: { osc1: { on: true, wave: 'triangle', freq: 220 }, filter: { type: 'lowpass', freq: 1500, q: 0 }, adsr: { a: 0.5, d: 0.5, s: 0.8, r: 1.0 } },
+    drum: { osc1: { on: true, wave: 'square', freq: 100 }, filter: { type: 'lowpass', freq: 500, q: 8 }, adsr: { a: 0.01, d: 0.3, s: 0.1, r: 0.1 } },
+    arp: { osc1: { on: true, wave: 'sawtooth', freq: 440 }, filter: { type: 'bandpass', freq: 1200, q: 3 }, adsr: { a: 0.02, d: 0.1, s: 0.5, r: 0.15 } },
+    bass2: { osc1: { on: true, wave: 'triangle', freq: 55 }, filter: { type: 'lowpass', freq: 400, q: 6 }, adsr: { a: 0.05, d: 0.3, s: 0.6, r: 0.2 } },
+    fx: { osc1: { on: true, wave: 'noise', freq: 800 }, filter: { type: 'highpass', freq: 2000, q: 1 }, adsr: { a: 0.01, d: 0.05, s: 0.3, r: 0.1 } }
   };
+
+  document.querySelectorAll('.preset-btn').forEach(b => {
+    if (b.dataset.preset) {
+      b.addEventListener('click', () => {
+        const p = PRESETS[b.dataset.preset];
+        if (!p) return;
+        if (p.osc1 && components.osc1) {
+          components.osc1.isOn = p.osc1.on;
+          components.osc1.waveform = p.osc1.wave;
+          components.osc1.frequency = p.osc1.freq;
+          components.osc1.update();
+        }
+        if (p.filter && components.filter) {
+          components.filter.filterType = p.filter.type;
+          components.filter.frequency = p.filter.freq;
+          components.filter.Q = p.filter.q;
+          components.filter.update();
+        }
+        if (p.adsr && components.adsr) {
+          components.adsr.attack = p.adsr.a;
+          components.adsr.decay = p.adsr.d;
+          components.adsr.sustain = p.adsr.s;
+          components.adsr.release = p.adsr.r;
+          components.adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
+        }
+      });
+    }
+  });
 
   // Visualization loop
   function draw() {
