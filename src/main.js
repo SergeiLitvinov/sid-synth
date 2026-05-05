@@ -239,10 +239,25 @@ const NOTES = {
       path.style.cursor = 'pointer';
       path.title = `Click to delete ${conn.from} → ${toLabel}`;
       path.dataset.index = index;
-      path.onclick = (e) => {
+      path.addEventListener('click', (e) => {
         e.stopPropagation();
-        deleteConnection(index);
-      };
+        e.preventDefault();
+        const idx = parseInt(path.dataset.index);
+        if (!isNaN(idx)) deleteConnection(idx);
+      });
+      path.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const idx = parseInt(path.dataset.index);
+        if (!isNaN(idx)) deleteConnection(idx);
+      });
+      path.addEventListener('mouseenter', () => {
+        path.setAttribute('stroke', '#ff4444');
+        path.setAttribute('stroke-width', '3');
+      });
+      path.addEventListener('mouseleave', () => {
+        path.setAttribute('stroke', '#4af74a');
+        path.setAttribute('stroke-width', '2');
+      });
       svgEl.appendChild(path);
       
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -256,18 +271,18 @@ const NOTES = {
   }
   
   function deleteConnection(index) {
-    if (index < 0 || index >= connections.length) return;
+    if (isNaN(index) || index < 0 || index >= connections.length) return;
     const conn = connections[index];
     
     // Disconnect audio
     const fromComp = components[conn.from];
     if (fromComp && fromComp.outputGain) {
       if (conn.to === 'master') {
-        fromComp.outputGain.disconnect(masterGain);
+        try { fromComp.outputGain.disconnect(masterGain); } catch(e) {}
       } else {
         const toComp = components[conn.to];
         if (toComp && toComp.inputGain) {
-          fromComp.outputGain.disconnect(toComp.inputGain);
+          try { fromComp.outputGain.disconnect(toComp.inputGain); } catch(e) {}
         }
       }
     }
