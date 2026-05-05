@@ -117,7 +117,7 @@ const NOTE_NAMES = Object.keys(NOTES);
     // LFO модуляция фильтра
     let lfoNode = null;
     if (document.getElementById('lfoOn')?.checked) {
-      lfo = new Lfo(ctx, { type: 'sine', rate: +document.getElementById('lfoRate')?.value || 1, depth: +document.getElementById('lfoDepth')?.value || 50 });
+      lfo = new Lfo(ctx, { type: document.getElementById('lfoType')?.value || 'sine', rate: +document.getElementById('lfoRate')?.value || 1, depth: +document.getElementById('lfoDepth')?.value || 50 });
       lfo.connect(filterNode.frequency);
       lfoNode = lfo;
     }
@@ -130,7 +130,7 @@ const NOTE_NAMES = Object.keys(NOTES);
       pwmNode = pwm;
     }
 
-    // Ring Mod
+    // Ring Mod - подключаем через спец. цепь
     let ringNode = null;
     if (document.getElementById('ringModOn')?.checked && o1 && o2) {
       ringMod = new RingMod(ctx);
@@ -139,7 +139,7 @@ const NOTE_NAMES = Object.keys(NOTES);
       ringOutput.connect(filterNode);
       ringNode = ringMod;
     } else {
-      oscNodes.forEach(o => o.connect(filterNode));
+      oscNodes.forEach(o => { try { o.connect(filterNode); } catch(e) {} });
     }
 
     // Hard Sync
