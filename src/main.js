@@ -1,6 +1,6 @@
 import { Adsr } from './envelope/adshr.js';
-import { createSine, createSquare, createTriangle, createNoise } from './oscillator/index.js';
-import { createLowpass, createHighpass, createBandpass, createNonlinearFilter } from './filter/index.js';
+import { create as createOsc } from './oscillator/index.js';
+import { create as createFilter } from './filter/index.js';
 import { Lfo, Pwm, RingMod, HardSync } from './modulator/index.js';
 import { PatternSequencer } from './sequencer/pattern.js';
 
@@ -21,13 +21,23 @@ const NOTE_NAMES = Object.keys(NOTES);
   canvas.width = window.innerWidth > 800 ? 750 : window.innerWidth - 40;
   canvas.height = 180;
 
+  const specCanvas = document.getElementById('spectroscope');
+  const specCvs = specCanvas.getContext('2d');
+  specCanvas.width = canvas.width;
+  specCanvas.height = 120;
+
   window.addEventListener('resize', () => {
     canvas.width = window.innerWidth > 800 ? 750 : window.innerWidth - 40;
+    specCanvas.width = canvas.width;
   });
 
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 4096;
   masterGain.connect(analyser);
+
+  const analyserFreq = ctx.createAnalyser();
+  analyserFreq.fftSize = 2048;
+  masterGain.connect(analyserFreq);
 
   let activeNodes = [];
   let currentAdsr = null;
@@ -36,14 +46,16 @@ const NOTE_NAMES = Object.keys(NOTES);
   let lfo = null;
   let pwm = null;
   let ringMod = null;
+  let hardSync = null;
 
   function stopAll() {
-    activeNodes.forEach(n => { try { if (n.stop) n.stop(); n.disconnect(); } catch(e) {} });
+    activeNodes.forEach(n => { try { if (n && n.stop) n.stop(); if (n && n.disconnect) n.disconnect(); } catch(e) {} });
     activeNodes = [];
     if (currentAdsr) { try { currentAdsr.dispose(); } catch(e) {} currentAdsr = null; }
     if (lfo) { lfo.dispose(); lfo = null; }
     if (pwm) { pwm.dispose(); pwm = null; }
     if (ringMod) { ringMod.dispose(); ringMod = null; }
+    if (hardSync) { hardSync = null; }
     if (arpTimer) { clearInterval(arpTimer); arpTimer = null; }
     isPlaying = false;
     document.getElementById('noteDisplay').textContent = '_';
@@ -51,28 +63,10 @@ const NOTE_NAMES = Object.keys(NOTES);
     document.querySelectorAll('.osc-unit').forEach(el => el.classList.remove('active'));
   }
 
-  function createOsc(type, freq) {
-    if (type === 'noise') return createNoise(ctx);
-    switch (type) {
-      case 'sine': return createSine(ctx, freq);
-      case 'square': return createSquare(ctx, freq);
-      case 'triangle': return createTriangle(ctx, freq);
-      default: return createSquare(ctx, freq);
-    }
-  }
-
-  function createFilter(type, freq, Q) {
-    switch (type) {
-      case 'highpass': return createHighpass(ctx, freq, Q);
-      case 'bandpass': return createBandpass(ctx, freq, Q);
-      case 'lowpass':
-      default: return createLowpass(ctx, freq, Q);
-    }
-  }
-
   function playNote(note, duration = 0.5) {
     if (ctx.state === 'suspended') ctx.resume();
     const freq = NOTES[note] || 440;
+
     const adsr = new Adsr(ctx, {
       attack: +document.getElementById('attack')?.value || 0.05,
       decay: +document.getElementById('decay')?.value || 0.2,
@@ -88,45 +82,81 @@ const NOTE_NAMES = Object.keys(NOTES);
     );
 
     const nodes = [];
+    const oscNodes = [];
     const osc1On = document.getElementById('osc1On')?.checked;
     const osc2On = document.getElementById('osc2On')?.checked;
     const osc3On = document.getElementById('osc3On')?.checked;
 
+    let o1, o2, o3;
+
     if (osc1On) {
-      const o1 = createOsc(document.getElementById('waveform1')?.value || 'sawtooth', freq);
-      o1.connect(filterNode);
-      nodes.push(o1);
+      o1 = createOsc(document.getElementById('waveform1')?.value || 'sawtooth', freq);
+      oscNodes.push(o1);
       document.getElementById('osc1')?.classList.add('active');
     }
     if (osc2On) {
       const detune = +document.getElementById('freq2')?.value || freq * 2;
-      const o2 = createOsc(document.getElementById('waveform2')?.value || 'sawtooth', detune);
-      o2.connect(filterNode);
-      nodes.push(o2);
+      o2 = createOsc(document.getElementById('waveform2')?.value || 'sawtooth', detune);
+      oscNodes.push(o2);
       document.getElementById('osc2')?.classList.add('active');
     }
     if (osc3On) {
       const detune = +document.getElementById('freq3')?.value || freq * 3;
-      const o3 = createOsc(document.getElementById('waveform3')?.value || 'sawtooth', detune);
-      o3.connect(filterNode);
-      nodes.push(o3);
+      o3 = createOsc(document.getElementById('waveform3')?.value || 'sawtooth', detune);
+      oscNodes.push(o3);
       document.getElementById('osc3')?.classList.add('active');
+    }
+
+    if (oscNodes.length === 0) { adsr.dispose(); return; }
+
+    // LFO модуляция фильтра
+    let lfoNode = null;
+    if (document.getElementById('lfoOn')?.checked) {
+      lfo = new Lfo(ctx, { type: 'sine', rate: +document.getElementById('lfoRate')?.value || 1, depth: +document.getElementById('lfoDepth')?.value || 50 });
+      lfo.connect(filterNode.frequency);
+      lfoNode = lfo;
+    }
+
+    // PWM для square осциллятора
+    let pwmNode = null;
+    if (document.getElementById('pwmOn')?.checked && o1 && document.getElementById('waveform1')?.value === 'square') {
+      pwm = new Pwm(ctx, { rate: +document.getElementById('pwmRate')?.value || 1, depth: +document.getElementById('pwmDepth')?.value || 0.5 });
+      pwm.connectSquareOsc(o1);
+      pwmNode = pwm;
+    }
+
+    // Ring Mod
+    let ringNode = null;
+    if (document.getElementById('ringModOn')?.checked && o1 && o2) {
+      ringMod = new RingMod(ctx);
+      const ringOutput = ringMod.connect(o1, o2);
+      o1.disconnect(); o2.disconnect();
+      ringOutput.connect(filterNode);
+      ringNode = ringMod;
+    } else {
+      oscNodes.forEach(o => o.connect(filterNode));
+    }
+
+    // Hard Sync
+    if (document.getElementById('hardSyncOn')?.checked && o1 && o2) {
+      hardSync = new HardSync(ctx);
+      hardSync.connect(o1, o2);
     }
 
     filterNode.connect(adsr.gain);
     adsr.connect(masterGain);
 
-    nodes.forEach(o => { o.start(); });
+    oscNodes.forEach(o => { try { o.start(); } catch(e) {} });
     adsr.triggerAttack();
 
-    activeNodes = [...nodes, filterNode, adsr];
+    activeNodes = [...oscNodes, filterNode, adsr, lfoNode, pwmNode, ringNode].filter(Boolean);
 
     document.getElementById('noteDisplay').textContent = note;
 
     setTimeout(() => {
       adsr.triggerRelease();
       setTimeout(() => {
-        nodes.forEach(o => { try { o.stop(); } catch(e) {} });
+        oscNodes.forEach(o => { try { o.stop(); } catch(e) {} });
       }, (+document.getElementById('release')?.value || 0.25) * 1000 + 50);
     }, duration * 1000);
   }
@@ -260,6 +290,8 @@ const NOTE_NAMES = Object.keys(NOTES);
 
   function draw() {
     requestAnimationFrame(draw);
+
+    // Oscilloscope
     const data = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteTimeDomainData(data);
     const w = canvas.width, h = canvas.height;
@@ -284,11 +316,11 @@ const NOTE_NAMES = Object.keys(NOTES);
     cvs.shadowColor = '#4af74a';
     cvs.shadowBlur = 25;
     cvs.beginPath();
-    const slice = w / data.length;
+    const sliceW = w / data.length;
     for (let i = 0; i < data.length; i++) {
       const y = (data[i] / 128) * h / 2;
       if (i === 0) cvs.moveTo(0, y);
-      else cvs.lineTo(i * slice, y);
+      else cvs.lineTo(i * sliceW, y);
     }
     cvs.stroke();
 
@@ -299,7 +331,7 @@ const NOTE_NAMES = Object.keys(NOTES);
     for (let i = 0; i < data.length; i++) {
       const y = (data[i] / 128) * h / 2;
       if (i === 0) cvs.moveTo(0, y);
-      else cvs.lineTo(i * slice, y);
+      else cvs.lineTo(i * sliceW, y);
     }
     cvs.stroke();
 
@@ -309,9 +341,28 @@ const NOTE_NAMES = Object.keys(NOTES);
     for (let i = 0; i < data.length; i++) {
       const y = (data[i] / 128) * h / 2;
       if (i === 0) cvs.moveTo(0, y);
-      else cvs.lineTo(i * slice, y);
+      else cvs.lineTo(i * sliceW, y);
     }
     cvs.stroke();
+
+    // Spectroscope
+    const freqData = new Uint8Array(analyserFreq.frequencyBinCount);
+    analyserFreq.getByteFrequencyData(freqData);
+    const sw = specCanvas.width, sh = specCanvas.height;
+
+    specCvs.fillStyle = '#000000';
+    specCvs.fillRect(0, 0, sw, sh);
+
+    const barWidth = (sw / freqData.length) * 2;
+    let barX = 0;
+
+    for (let i = 0; i < freqData.length; i++) {
+      const barHeight = (freqData[i] / 255) * sh;
+      const hue = (i / freqData.length) * 120 + 80;
+      specCvs.fillStyle = `hsl(${hue}, 70%, 50%)`;
+      specCvs.fillRect(barX, sh - barHeight, barWidth, barHeight);
+      barX += barWidth + 1;
+    }
   }
   draw();
 })();
