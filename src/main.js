@@ -455,6 +455,46 @@ const NOTE_NAMES = Object.keys(NOTES);
   document.getElementById('seqPlay').onclick = startSeq;
   document.getElementById('seqStop').onclick = stopAll;
 
+  // Sequence export/import
+  document.getElementById('exportSeq').onclick = () => {
+    const data = { pattern: seqPat, bpm: +document.getElementById('seqBPM')?.value || 120 };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sequence.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  document.getElementById('importSeq').onclick = () => {
+    document.getElementById('seqFile').click();
+  };
+
+  document.getElementById('seqFile').onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.pattern && Array.isArray(data.pattern)) {
+          for (let i = 0; i < 16; i++) {
+            seqPat[i] = data.pattern[i] || null;
+            const el = document.querySelector(`.seq-step[data-step="${i}"]`);
+            if (el) {
+              if (seqPat[i]) { el.classList.add('active'); el.textContent = seqPat[i].charAt(0); }
+              else { el.classList.remove('active'); el.textContent = i + 1; }
+            }
+          }
+        }
+        if (data.bpm) document.getElementById('seqBPM').value = data.bpm;
+      } catch(err) { console.error('Import error:', err); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const grid = document.getElementById('seqGrid');
   for (let i = 0; i < 16; i++) {
     const step = document.createElement('div');
