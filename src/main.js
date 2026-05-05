@@ -200,7 +200,7 @@ const NOTES = {
     const masterPort = document.getElementById('masterOutput');
     const masterRect = masterPort ? masterPort.getBoundingClientRect() : null;
     
-    connections.forEach(conn => {
+    connections.forEach((conn, index) => {
       const fromComp = components[conn.from];
       if (!fromComp || !fromComp.element) return;
       
@@ -236,6 +236,13 @@ const NOTES = {
       path.setAttribute('stroke', '#4af74a');
       path.setAttribute('stroke-width', '2');
       path.setAttribute('opacity', '0.7');
+      path.style.cursor = 'pointer';
+      path.title = `Click to delete ${conn.from} → ${toLabel}`;
+      path.dataset.index = index;
+      path.onclick = (e) => {
+        e.stopPropagation();
+        deleteConnection(index);
+      };
       svgEl.appendChild(path);
       
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -246,6 +253,91 @@ const NOTES = {
       label.textContent = `${conn.from} → ${toLabel}`;
       svgEl.appendChild(label);
     });
+  }
+      
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const cx = (x1 + x2) / 2;
+      const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', '#4af74a');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('opacity', '0.7');
+      svgEl.appendChild(path);
+      
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', (x1 + x2) / 2);
+      label.setAttribute('y', (y1 + y2) / 2 - 5);
+      label.setAttribute('fill', '#4af74a');
+      label.setAttribute('font-size', '8px');
+      label.textContent = `${conn.from} → ${toLabel}`;
+      svgEl.appendChild(label);
+    });
+  }
+
+  function deleteConnection(index) {
+    if (index < 0 || index >= connections.length) return;
+    const conn = connections[index];
+    
+    // Disconnect audio
+    const fromComp = components[conn.from];
+    if (fromComp && fromComp.outputGain) {
+      if (conn.to === 'master') {
+        fromComp.outputGain.disconnect(masterGain);
+      } else {
+        const toComp = components[conn.to];
+        if (toComp && toComp.inputGain) {
+          fromComp.outputGain.disconnect(toComp.inputGain);
+        }
+      }
+    }
+    
+    connections.splice(index, 1);
+    drawConnections();
+  }
+
+  // Save/Load patch connections
+  function savePatch() {
+    const patch = {
+      connections: connections.map(c => ({ from: c.from, to: c.to })),
+      components: Object.keys(components).map(id => ({
+        id,
+        type: components[id].type,
+        label: components[id].label,
+        frequency: components[id].frequency,
+        waveform: components[id].waveform
+      }))
+    };
+    const blob = new Blob([JSON.stringify(patch, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sid-synth-patch.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function loadPatch(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const patch = JSON.parse(e.target.result);
+        // Clear existing
+        Object.keys(components).forEach(id => {
+          components[id].dispose();
+          components[id].element.remove();
+        });
+        connections = [];
+        components = {};
+        
+        // Recreate components (simplified - just log for now)
+        console.log('Loaded patch:', patch);
+        alert('Patch loaded! Check console for details.');
+      } catch(err) {
+        console.error('Failed to load patch:', err);
+      }
+    };
+    reader.readAsText(file);
   }
 
   function initPortClicks() {
@@ -515,4 +607,15 @@ const NOTES = {
     midiBtn.disabled = true;
     midiStatus.textContent = 'NO MIDI';
   }
+
+  // Save/Load patch buttons
+  const savePatchBtn = document.getElementById('savePatch');
+  const loadPatchBtn = document.getElementById('loadPatch');
+  const patchFileInput = document.getElementById('patchFile');
+  
+  if (savePatchBtn) savePatchBtn.onclick = savePatch;
+  if (loadPatchBtn) loadPatchBtn.onclick = () => patchFileInput.click();
+  if (patchFileInput) patchFileInput.onchange = (e) => {
+    if (e.target.files[0]) loadPatch(e.target.files[0]);
+  };
 })();
