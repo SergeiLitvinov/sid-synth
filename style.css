@@ -47,10 +47,22 @@ canvas {
 }
 
 .rack {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px;
+  position: relative;
+  min-height: 400px;
   margin-bottom: 15px;
+  border: 1px solid #1a2a1a;
+  padding: 10px;
+}
+
+.component {
+  background: #0d120d;
+  border: 1px solid #2a3a2a;
+  padding: 8px;
+  position: absolute;
+  min-height: 120px;
+  width: 200px;
+  cursor: move;
+  user-select: none;
 }
 
 .component {

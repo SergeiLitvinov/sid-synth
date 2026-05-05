@@ -43,34 +43,71 @@ const NOTE_NAMES = Object.keys(NOTES);
   const rack = document.getElementById('rack');
   const components = {};
 
-  // Create components
-  const osc1 = new OscillatorComponent(ctx, 1);
-  components.osc1 = osc1;
-  rack.appendChild(osc1.element);
+  // Create components with initial positions
+  const positions = [
+    { id: 'osc1', x: 10, y: 10 },
+    { id: 'osc2', x: 220, y: 10 },
+    { id: 'osc3', x: 430, y: 10 },
+    { id: 'filter', x: 10, y: 150 },
+    { id: 'adsr', x: 220, y: 150 },
+    { id: 'lfo', x: 430, y: 150 },
+    { id: 'effects', x: 10, y: 290 }
+  ];
 
-  const osc2 = new OscillatorComponent(ctx, 2);
-  components.osc2 = osc2;
-  rack.appendChild(osc2.element);
+  const compList = [
+    { id: 'osc1', comp: new OscillatorComponent(ctx, 1) },
+    { id: 'osc2', comp: new OscillatorComponent(ctx, 2) },
+    { id: 'osc3', comp: new OscillatorComponent(ctx, 3) },
+    { id: 'filter', comp: new FilterComponent(ctx) },
+    { id: 'adsr', comp: new AdsrComponent(ctx) },
+    { id: 'lfo', comp: new LfoComponent(ctx) },
+    { id: 'effects', comp: new EffectsComponent(ctx) }
+  ];
 
-  const osc3 = new OscillatorComponent(ctx, 3);
-  components.osc3 = osc3;
-  rack.appendChild(osc3.element);
+  compList.forEach(({ id, comp }) => {
+    components[id] = comp;
+    rack.appendChild(comp.element);
+    const pos = positions.find(p => p.id === id);
+    if (pos) {
+      comp.element.style.left = pos.x + 'px';
+      comp.element.style.top = pos.y + 'px';
+    }
+  });
 
-  const filter = new FilterComponent(ctx);
-  components.filter = filter;
-  rack.appendChild(filter.element);
+  // Drag functionality
+  let draggedComp = null;
+  let offsetX = 0, offsetY = 0;
 
-  const adsr = new AdsrComponent(ctx);
-  components.adsr = adsr;
-  rack.appendChild(adsr.element);
+  document.querySelectorAll('.component').forEach(el => {
+    el.onmousedown = (e) => {
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.tagName === 'SVG') return;
+      draggedComp = el;
+      const rect = el.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+      el.style.zIndex = 1000;
+      e.preventDefault();
+    };
+  });
 
-  const lfo = new LfoComponent(ctx);
-  components.lfo = lfo;
-  rack.appendChild(lfo.element);
+  document.onmousemove = (e) => {
+    if (!draggedComp) return;
+    const rackRect = rack.getBoundingClientRect();
+    let x = e.clientX - rackRect.left - offsetX;
+    let y = e.clientY - rackRect.top - offsetY;
+    x = Math.max(0, Math.min(x, rackRect.width - draggedComp.offsetWidth));
+    y = Math.max(0, Math.min(y, rackRect.height - draggedComp.offsetHeight));
+    draggedComp.style.left = x + 'px';
+    draggedComp.style.top = y + 'px';
+    drawConnections();
+  };
 
-  const effects = new EffectsComponent(ctx);
-  components.effects = effects;
-  rack.appendChild(effects.element);
+  document.onmouseup = () => {
+    if (draggedComp) {
+      draggedComp.style.zIndex = '';
+      draggedComp = null;
+    }
+  };
 
   // Default connection: osc1 -> filter -> adsr -> effects -> master
   osc1.connect(filter);
