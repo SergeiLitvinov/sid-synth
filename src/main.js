@@ -254,13 +254,16 @@ const NOTES = {
         path.setAttribute('stroke', '#ff4444');
         path.setAttribute('stroke-width', '3');
         selectedCableIndex = index;
-        // Show delete circle with X
-        showCableDeleteUI(path, index, x1, y1, x2, y2);
       });
       path.addEventListener('mouseleave', () => {
         path.setAttribute('stroke', '#4af74a');
         path.setAttribute('stroke-width', '2');
-        hideCableDeleteUI();
+        selectedCableIndex = null;
+      });
+      path.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        deleteConnection(index);
       });
       svgEl.appendChild(path);
       
@@ -274,54 +277,8 @@ const NOTES = {
     });
   }
   
-  let cableDeleteUI = null;
-  
-  function showCableDeleteUI(path, index, x1, y1, x2, y2) {
-    hideCableDeleteUI();
-    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    group.style.cursor = 'pointer';
-    
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    circle.setAttribute('cx', cx);
-    circle.setAttribute('cy', cy);
-    circle.setAttribute('r', 10);
-    circle.setAttribute('fill', '#ff4444');
-    circle.setAttribute('opacity', '0.8');
-    
-    // Draw X inside circle
-    const line1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line1.setAttribute('x1', cx - 4);
-    line1.setAttribute('y1', cy - 4);
-    line1.setAttribute('x2', cx + 4);
-    line1.setAttribute('y2', cy + 4);
-    line1.setAttribute('stroke', '#fff');
-    line1.setAttribute('stroke-width', '2');
-    
-    const line2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    line2.setAttribute('x1', cx + 4);
-    line2.setAttribute('y1', cy - 4);
-    line2.setAttribute('x2', cx - 4);
-    line2.setAttribute('y2', cy + 4);
-    line2.setAttribute('stroke', '#fff');
-    line2.setAttribute('stroke-width', '2');
-    
-    group.appendChild(circle);
-    group.appendChild(line1);
-    group.appendChild(line2);
-    
-    group.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteConnection(index);
-    });
-    
-    svgEl.appendChild(group);
-    cableDeleteUI = group;
-  }
-  
-  function hideCableDeleteUI() {
-    if (cableDeleteUI) { cableDeleteUI.remove(); cableDeleteUI = null; }
-  }
+  // Direct click on cable deletes it, DEL key also works
+  // No complex UI - just click the cable or press DEL
 
   function deleteConnection(index) {
     const idx = typeof index === 'string' ? parseInt(index) : index;
