@@ -1,5 +1,6 @@
 import { Lfo } from '../modulator/index.js';
 import { AudioComponent } from './AudioComponent.js';
+import { Knob } from './Knob.js';
 
 export class LfoComponent extends AudioComponent {
   constructor(ctx) {
@@ -9,6 +10,8 @@ export class LfoComponent extends AudioComponent {
     this.waveType = 'sine';
     this.lfo = new Lfo(ctx, { type: this.waveType, rate: this.rate, depth: this.depth });
     this.node = this.lfo.gain;
+    this.rateKnob = null;
+    this.depthKnob = null;
     this.element = this.createElement();
   }
 
@@ -31,37 +34,28 @@ export class LfoComponent extends AudioComponent {
     row1.appendChild(sel);
     body.appendChild(row1);
 
-    // Rate
-    const row2 = document.createElement('div');
-    row2.className = 'param-row';
-    const lbl1 = document.createElement('span');
-    lbl1.className = 'param-label';
-    lbl1.textContent = 'RATE';
-    row2.appendChild(lbl1);
-    const inp1 = document.createElement('input');
-    inp1.type = 'number';
-    inp1.value = this.rate;
-    inp1.step = '0.1';
-    inp1.style.width = '60px';
-    inp1.onchange = () => { this.rate = +inp1.value; this.lfo.setRate(this.rate); };
-    row2.appendChild(inp1);
-    body.appendChild(row2);
+    // Rate knob
+    this.rateKnob = new Knob({
+      min: 0.1,
+      max: 20,
+      value: this.rate,
+      step: 0.1,
+      label: 'RATE',
+      unit: 'Hz',
+      onChange: (val) => { this.rate = val; this.lfo.setRate(val); }
+    });
+    body.appendChild(this.rateKnob.element);
 
-    // Depth
-    const row3 = document.createElement('div');
-    row3.className = 'param-row';
-    const lbl2 = document.createElement('span');
-    lbl2.className = 'param-label';
-    lbl2.textContent = 'DEP';
-    row3.appendChild(lbl2);
-    const inp2 = document.createElement('input');
-    inp2.type = 'number';
-    inp2.value = this.depth;
-    inp2.step = '1';
-    inp2.style.width = '60px';
-    inp2.onchange = () => { this.depth = +inp2.value; this.lfo.setDepth(this.depth); };
-    row3.appendChild(inp2);
-    body.appendChild(row3);
+    // Depth knob
+    this.depthKnob = new Knob({
+      min: 1,
+      max: 100,
+      value: this.depth,
+      step: 1,
+      label: 'DEP',
+      onChange: (val) => { this.depth = val; this.lfo.setDepth(val); }
+    });
+    body.appendChild(this.depthKnob.element);
 
     // Output
     const out = document.createElement('div');

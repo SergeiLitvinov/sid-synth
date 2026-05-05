@@ -1,5 +1,6 @@
 import { Adsr } from '../envelope/adshr.js';
 import { AudioComponent } from './AudioComponent.js';
+import { Knob } from './Knob.js';
 
 export class AdsrComponent extends AudioComponent {
   constructor(ctx) {
@@ -10,6 +11,7 @@ export class AdsrComponent extends AudioComponent {
     this.release = 0.25;
     this.adsr = new Adsr(ctx, { attack: this.attack, decay: this.decay, sustain: this.sustain, release: this.release });
     this.node = this.adsr.gain;
+    this.knobs = {};
     this.element = this.createElement();
   }
 
@@ -18,27 +20,22 @@ export class AdsrComponent extends AudioComponent {
     const body = el.querySelector('.component-body');
 
     const params = [
-      { label: 'A', val: this.attack, key: 'attack', step: 0.01 },
-      { label: 'D', val: this.decay, key: 'decay', step: 0.01 },
-      { label: 'S', val: this.sustain, key: 'sustain', step: 0.01 },
-      { label: 'R', val: this.release, key: 'release', step: 0.01 }
+      { label: 'A', val: this.attack, key: 'attack', min: 0.01, max: 2, step: 0.01 },
+      { label: 'D', val: this.decay, key: 'decay', min: 0.01, max: 2, step: 0.01 },
+      { label: 'S', val: this.sustain, key: 'sustain', min: 0, max: 1, step: 0.01 },
+      { label: 'R', val: this.release, key: 'release', min: 0.01, max: 2, step: 0.01 }
     ];
 
     params.forEach(p => {
-      const row = document.createElement('div');
-      row.className = 'param-row';
-      const lbl = document.createElement('span');
-      lbl.className = 'param-label';
-      lbl.textContent = p.label;
-      row.appendChild(lbl);
-      const inp = document.createElement('input');
-      inp.type = 'number';
-      inp.value = p.val;
-      inp.step = p.step;
-      inp.style.width = '55px';
-      inp.onchange = () => { this[p.key] = +inp.value; this.adsr.setParams({ [p.key]: this[p.key] }); };
-      row.appendChild(inp);
-      body.appendChild(row);
+      this.knobs[p.key] = new Knob({
+        min: p.min,
+        max: p.max,
+        value: p.val,
+        step: p.step,
+        label: p.label,
+        onChange: (val) => { this[p.key] = val; this.adsr.setParams({ [p.key]: val }); }
+      });
+      body.appendChild(this.knobs[p.key].element);
     });
 
     // Input dot

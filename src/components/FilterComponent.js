@@ -1,5 +1,6 @@
 import { create as createFilter } from '../filter/index.js';
 import { AudioComponent } from './AudioComponent.js';
+import { Knob } from './Knob.js';
 
 export class FilterComponent extends AudioComponent {
   constructor(ctx) {
@@ -7,6 +8,8 @@ export class FilterComponent extends AudioComponent {
     this.filterType = 'lowpass';
     this.frequency = 2000;
     this.Q = 1;
+    this.freqKnob = null;
+    this.qKnob = null;
     this.node = createFilter(this.filterType, ctx, this.frequency, this.Q);
     this.element = this.createElement();
   }
@@ -30,36 +33,27 @@ export class FilterComponent extends AudioComponent {
     row1.appendChild(sel);
     body.appendChild(row1);
 
-    // Frequency
-    const row2 = document.createElement('div');
-    row2.className = 'param-row';
-    const lbl1 = document.createElement('span');
-    lbl1.className = 'param-label';
-    lbl1.textContent = 'FRQ';
-    row2.appendChild(lbl1);
-    const inp1 = document.createElement('input');
-    inp1.type = 'number';
-    inp1.value = this.frequency;
-    inp1.style.width = '70px';
-    inp1.onchange = () => { this.frequency = +inp1.value; this.update(); };
-    row2.appendChild(inp1);
-    body.appendChild(row2);
+    // Frequency knob
+    this.freqKnob = new Knob({
+      min: 20,
+      max: 20000,
+      value: this.frequency,
+      label: 'FRQ',
+      unit: 'Hz',
+      onChange: (val) => { this.frequency = val; this.update(); }
+    });
+    body.appendChild(this.freqKnob.element);
 
-    // Q/Resonance
-    const row3 = document.createElement('div');
-    row3.className = 'param-row';
-    const lbl2 = document.createElement('span');
-    lbl2.className = 'param-label';
-    lbl2.textContent = 'Q';
-    row3.appendChild(lbl2);
-    const inp2 = document.createElement('input');
-    inp2.type = 'number';
-    inp2.value = this.Q;
-    inp2.step = '0.1';
-    inp2.style.width = '50px';
-    inp2.onchange = () => { this.Q = +inp2.value; this.update(); };
-    row3.appendChild(inp2);
-    body.appendChild(row3);
+    // Q knob
+    this.qKnob = new Knob({
+      min: 0.1,
+      max: 20,
+      value: this.Q,
+      step: 0.1,
+      label: 'Q',
+      onChange: (val) => { this.Q = val; this.update(); }
+    });
+    body.appendChild(this.qKnob.element);
 
     // Input dot
     const inp = document.createElement('div');

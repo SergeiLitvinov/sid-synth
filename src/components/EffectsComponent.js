@@ -35,14 +35,18 @@ export class EffectsComponent extends AudioComponent {
     lbl1.textContent = 'DELAY';
     lbl1.className = 'param-label';
     row1.appendChild(lbl1);
-    const inp1 = document.createElement('input');
-    inp1.type = 'number';
-    inp1.value = this.delayTime;
-    inp1.step = '0.1';
-    inp1.style.width = '50px';
-    inp1.onchange = () => { this.delayTime = +inp1.value; this.update(); };
-    row1.appendChild(inp1);
     body.appendChild(row1);
+
+    this.delayKnob = new Knob({
+      min: 0.1,
+      max: 2.0,
+      value: this.delayTime,
+      step: 0.1,
+      label: 'TIME',
+      unit: 's',
+      onChange: (val) => { this.delayTime = val; this.update(); }
+    });
+    body.appendChild(this.delayKnob.element);
 
     // Reverb
     const row2 = document.createElement('div');
@@ -55,14 +59,18 @@ export class EffectsComponent extends AudioComponent {
     lbl2.textContent = 'REVERB';
     lbl2.className = 'param-label';
     row2.appendChild(lbl2);
-    const inp2 = document.createElement('input');
-    inp2.type = 'number';
-    inp2.value = this.reverbDuration;
-    inp2.step = '0.1';
-    inp2.style.width = '50px';
-    inp2.onchange = () => { this.reverbDuration = +inp2.value; this.update(); };
-    row2.appendChild(inp2);
     body.appendChild(row2);
+
+    this.reverbKnob = new Knob({
+      min: 0.1,
+      max: 5.0,
+      value: this.reverbDuration,
+      step: 0.1,
+      label: 'SIZE',
+      unit: 's',
+      onChange: (val) => { this.reverbDuration = val; this.update(); }
+    });
+    body.appendChild(this.reverbKnob.element);
 
     // Input
     const inp = document.createElement('div');

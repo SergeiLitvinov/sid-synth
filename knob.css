@@ -1,0 +1,25 @@
+.knob-container {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 2px;
+}
+
+.knob-svg {
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+}
+
+.knob-label {
+  color: #3a5a3a;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-top: 2px;
+}
+
+.knob-value {
+  color: #4af74a;
+  font-size: 10px;
+  margin-top: 1px;
+}

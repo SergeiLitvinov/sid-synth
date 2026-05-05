@@ -1,5 +1,6 @@
 import { create as createOsc } from '../oscillator/index.js';
 import { AudioComponent } from './AudioComponent.js';
+import { Knob } from './Knob.js';
 
 export class OscillatorComponent extends AudioComponent {
   constructor(ctx, id = 1) {
@@ -9,6 +10,7 @@ export class OscillatorComponent extends AudioComponent {
     this.frequency = 440;
     this.isOn = id === 1;
     this.node = null;
+    this.freqKnob = null;
     this.element = this.createElement();
   }
 
@@ -38,20 +40,17 @@ export class OscillatorComponent extends AudioComponent {
     row1.appendChild(sel);
     body.appendChild(row1);
 
-    // Frequency
-    const row2 = document.createElement('div');
-    row2.className = 'param-row';
-    const lbl = document.createElement('span');
-    lbl.className = 'param-label';
-    lbl.textContent = 'FRQ';
-    row2.appendChild(lbl);
-    const inp = document.createElement('input');
-    inp.type = 'number';
-    inp.value = this.frequency;
-    inp.style.width = '80px';
-    inp.onchange = () => { this.frequency = +inp.value; this.update(); };
-    row2.appendChild(inp);
-    body.appendChild(row2);
+    // Frequency knob
+    this.freqKnob = new Knob({
+      min: 20,
+      max: 2000,
+      value: this.frequency,
+      step: 1,
+      label: 'FRQ',
+      unit: 'Hz',
+      onChange: (val) => { this.frequency = val; this.update(); }
+    });
+    body.appendChild(this.freqKnob.element);
 
     // Output dot
     const out = document.createElement('div');
