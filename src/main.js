@@ -408,6 +408,44 @@ const NOTE_NAMES = Object.keys(NOTES);
   document.onkeyup = e => { if (!isPlaying) stopAll(); };
 
   document.getElementById('play').onclick = () => { if (ctx.state === 'suspended') ctx.resume(); playNote('C'); };
+
+  // MIDI support
+  if (navigator.requestMIDIAccess) {
+    document.getElementById('midiConnect').onclick = async () => {
+      try {
+        const midi = await navigator.requestMIDIAccess();
+        const inputs = midi.inputs.values();
+        for (const input of inputs) {
+          input.onmidimessage = handleMidiMessage;
+        }
+        midi.onstatechange = () => {
+          const status = document.getElementById('midiStatus');
+          status.textContent = 'MIDI: ' + (midi.inputs.size > 0 ? 'CONNECTED' : 'DISCONNECTED');
+        };
+        document.getElementById('midiStatus').textContent = 'MIDI: ' + (midi.inputs.size > 0 ? 'CONNECTED' : 'NO DEVICE');
+      } catch(e) {
+        document.getElementById('midiStatus').textContent = 'MIDI: ERROR';
+        console.error('MIDI error:', e);
+      }
+    };
+  } else {
+    document.getElementById('midiConnect').disabled = true;
+    document.getElementById('midiStatus').textContent = 'MIDI: NOT SUPPORTED';
+  }
+
+  function handleMidiMessage(event) {
+    const [cmd, note, vel] = event.data;
+    const noteName = Object.keys(NOTES).find(n => Math.abs(NOTES[n] - 440 * Math.pow(2, (note - 69) / 12)) < 1);
+    if (!noteName) return;
+
+    if (cmd === 144 && vel > 0) { // Note on
+      if (ctx.state === 'suspended') ctx.resume();
+      if (document.getElementById('arpOn')?.checked) startArp(noteName);
+      else playNote(noteName);
+    } else if (cmd === 128 || (cmd === 144 && vel === 0)) { // Note off
+      if (!isPlaying) stopAll();
+    }
+  }
   document.getElementById('seqPlay').onclick = startSeq;
   document.getElementById('seqStop').onclick = stopAll;
 
