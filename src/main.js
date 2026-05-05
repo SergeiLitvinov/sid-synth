@@ -240,7 +240,7 @@ const NOTES = {
       path.title = `Click to delete ${conn.from} → ${toLabel}`;
       path.dataset.index = index;
       
-      path.onclick = () => deleteConnection(index);
+      path.addEventListener('click', () => deleteConnection(index));
       
       svgEl.appendChild(path);
       
@@ -258,7 +258,11 @@ const NOTES = {
   // No complex UI - just click the cable or press DEL
 
   function deleteConnection(idx) {
-    if (isNaN(idx) || idx < 0 || idx >= connections.length) return;
+    console.log('Deleting cable index:', idx, 'connections length:', connections.length);
+    if (isNaN(idx) || idx < 0 || idx >= connections.length) {
+      console.log('Invalid index, aborting');
+      return;
+    }
     const conn = connections[idx];
     
     // Disconnect audio
