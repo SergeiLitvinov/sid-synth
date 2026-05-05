@@ -10,9 +10,11 @@ export class AdsrComponent extends AudioComponent {
     this.sustain = 0.6;
     this.release = 0.25;
     this.inputGain = ctx.createGain();
+    this.outputGain = ctx.createGain();
     this.adsr = new Adsr(ctx, { attack: this.attack, decay: this.decay, sustain: this.sustain, release: this.release });
     this.inputGain.connect(this.adsr.gain);
-    this.node = this.adsr.gain;
+    this.adsr.connect(this.outputGain);
+    this.node = this.outputGain;
     this.knobs = {};
     this.element = this.createElement();
   }
@@ -58,23 +60,11 @@ export class AdsrComponent extends AudioComponent {
   triggerAttack() { this.adsr.triggerAttack(); }
   triggerRelease() { this.adsr.triggerRelease(); }
 
-  connect(dest) {
-    if (this.adsr && dest.node) {
-      this.adsr.connect(dest.node);
-      this.isConnected = true;
-    }
-  }
-
-  connectInput(source) {
-    if (source.node && this.inputGain) {
-      source.node.connect(this.inputGain);
-    }
-  }
-
   dispose() {
     if (this.adsr) {
       this.adsr.dispose();
       this.inputGain.disconnect();
+      this.outputGain.disconnect();
       this.isConnected = false;
     }
   }

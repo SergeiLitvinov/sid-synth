@@ -116,17 +116,42 @@ const NOTES = {
     components[newId] = comp;
     rack.appendChild(comp.element);
     comp.element.style.left = Math.max(0, x - 100) + 'px';
-    comp.element.style.top = Math.max(0, y - 60) + 'px';
-    makeDraggable(comp.element);
-    labelConnections();
+    comp.element.style.top = Math.max(0, y - 30) + 'px';
+    makeDraggable(comp.element, newId);
+    
+    // Close button handler
+    if (comp.closeBtn) {
+      comp.closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Remove any connections involving this component
+        connections = connections.filter(c => c.from !== newId && c.to !== newId);
+        if (comp.outputGain) comp.outputGain.disconnect();
+        if (comp.inputGain) comp.inputGain.disconnect();
+        comp.dispose();
+        comp.element.remove();
+        delete components[newId];
+        drawConnections();
+        initPortClicks();
+      });
+    }
+    
+    initPortClicks();
+    drawConnections();
   }
 
-  function makeDraggable(el) {
+  let connections = [];
+  let currentConnectionFrom = null;
+  let tempLine = null;
+
+  let dragRAF = null;
+  let dragState = null;
+
+  function makeDraggable(el, id) {
     let isDragging = false;
     let startX = 0, startY = 0;
 
     el.addEventListener('mousedown', e => {
-      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg')) return;
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg') || e.target.classList.contains('close-btn')) return;
       isDragging = true;
       const rect = el.getBoundingClientRect();
       startX = e.clientX - rect.left;
@@ -144,88 +169,186 @@ const NOTES = {
       y = Math.max(0, Math.min(y, rackRect.height - el.offsetHeight));
       el.style.left = x + 'px';
       el.style.top = y + 'px';
-      labelConnections();
+      if (connections.length && !dragRAF) {
+        dragState = { el, id };
+        dragRAF = requestAnimationFrame(updateDragConnections);
+      }
     });
 
     document.addEventListener('mouseup', () => {
       if (isDragging) {
         el.style.zIndex = '';
         isDragging = false;
+        if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
+        drawConnections();
       }
     });
   }
 
-  function labelConnections() {
+  function updateDragConnections() {
+    drawConnections();
+    if (dragState) {
+      dragRAF = requestAnimationFrame(updateDragConnections);
+    }
+  }
+
+  function drawConnections() {
     while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
     
-    Object.keys(components).forEach(fromId => {
-      const fromComp = components[fromId];
+    const rackRect = rack.getBoundingClientRect();
+    const masterPort = document.getElementById('masterOutput');
+    const masterRect = masterPort ? masterPort.getBoundingClientRect() : null;
+    
+    connections.forEach(conn => {
+      const fromComp = components[conn.from];
       if (!fromComp || !fromComp.element) return;
       
       const fromOutput = fromComp.element.querySelector('[data-type="output"]');
       if (!fromOutput) return;
+      const r1 = fromOutput.getBoundingClientRect();
+      const x1 = r1.left - rackRect.left + r1.width/2;
+      const y1 = r1.top - rackRect.top + r1.height/2;
       
-      Object.keys(components).forEach(toId => {
-        if (toId === fromId) return;
-        const toComp = components[toId];
+      let x2, y2, toLabel;
+      
+      if (conn.to === 'master') {
+        if (!masterRect) return;
+        x2 = masterRect.left - rackRect.left + masterRect.width/2;
+        y2 = masterRect.top - rackRect.top + masterRect.height/2;
+        toLabel = 'MASTER';
+      } else {
+        const toComp = components[conn.to];
         if (!toComp || !toComp.element) return;
-        
         const toInput = toComp.element.querySelector('[data-type="input"]');
         if (!toInput) return;
-        
-        const r1 = fromOutput.getBoundingClientRect();
         const r2 = toInput.getBoundingClientRect();
-        const rackRect = rack.getBoundingClientRect();
-        
-        const x1 = r1.left - rackRect.left + r1.width/2;
-        const y1 = r1.top - rackRect.top + r1.height/2;
-        const x2 = r2.left - rackRect.left + r2.width/2;
-        const y2 = r2.top - rackRect.top + r2.height/2;
-        
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        const cx = (x1 + x2) / 2;
-        const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
-        path.setAttribute('d', d);
-        path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', '#4af74a');
-        path.setAttribute('stroke-width', '2');
-        path.setAttribute('opacity', '0.7');
-        svgEl.appendChild(path);
-        
-        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        label.setAttribute('x', (x1 + x2) / 2);
-        label.setAttribute('y', (y1 + y2) / 2 - 5);
-        label.setAttribute('fill', '#4af74a');
-        label.setAttribute('font-size', '8px');
-        label.textContent = `${fromId} → ${toId}`;
-        svgEl.appendChild(label);
-      });
+        x2 = r2.left - rackRect.left + r2.width/2;
+        y2 = r2.top - rackRect.top + r2.height/2;
+        toLabel = conn.to;
+      }
+      
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const cx = (x1 + x2) / 2;
+      const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', '#4af74a');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('opacity', '0.7');
+      svgEl.appendChild(path);
+      
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', (x1 + x2) / 2);
+      label.setAttribute('y', (y1 + y2) / 2 - 5);
+      label.setAttribute('fill', '#4af74a');
+      label.setAttribute('font-size', '8px');
+      label.textContent = `${conn.from} → ${toLabel}`;
+      svgEl.appendChild(label);
     });
   }
 
-  // Create default components
-  setTimeout(() => {
-    createComponent('oscillator', 'osc1', 50, 50);
-    createComponent('filter', 'filter', 270, 50);
-    createComponent('adsr', 'adsr', 490, 50);
-    createComponent('effects', 'effects', 50, 220);
+  function initPortClicks() {
+    // Master output port
+    const masterPort = document.getElementById('masterOutput');
+    if (masterPort) {
+      masterPort.style.cursor = 'crosshair';
+      masterPort.title = 'Click to connect component output here';
+      masterPort.onclick = () => {
+        if (currentConnectionFrom) {
+          addConnection(currentConnectionFrom.id, 'master');
+          currentConnectionFrom.port.style.background = '';
+          currentConnectionFrom = null;
+        }
+      };
+    }
+
+    Object.keys(components).forEach(id => {
+      const comp = components[id];
+      if (!comp || !comp.element) return;
+      
+      const outputPort = comp.element.querySelector('[data-type="output"]');
+      const inputPort = comp.element.querySelector('[data-type="input"]');
+      
+      if (outputPort) {
+        outputPort.style.cursor = 'crosshair';
+        outputPort.title = 'Click to connect output';
+        outputPort.onclick = (e) => {
+          e.stopPropagation();
+          if (currentConnectionFrom) {
+            currentConnectionFrom.port.style.background = '';
+            if (currentConnectionFrom.id === id) {
+              currentConnectionFrom = null;
+              if (tempLine) { tempLine.remove(); tempLine = null; }
+              return;
+            }
+            addConnection(currentConnectionFrom.id, id);
+            currentConnectionFrom.port.style.background = '';
+            currentConnectionFrom = null;
+            if (tempLine) { tempLine.remove(); tempLine = null; }
+          } else {
+            currentConnectionFrom = { id, port: outputPort };
+            outputPort.style.background = '#4af74a';
+          }
+        };
+      }
+      
+      if (inputPort) {
+        inputPort.style.cursor = 'crosshair';
+        inputPort.title = 'Click to receive connection';
+      }
+    });
     
-    // Connect default chain
-    if (components.osc1 && components.filter) {
-      components.osc1.connect(components.filter);
-      components.filter.connectInput(components.osc1);
+    // Temp line for active connection
+    document.addEventListener('mousemove', e => {
+      if (!currentConnectionFrom) return;
+      if (tempLine) tempLine.remove();
+      
+      const rackRect = rack.getBoundingClientRect();
+      const fromComp = components[currentConnectionFrom.id];
+      if (!fromComp) return;
+      const fromOutput = fromComp.element.querySelector('[data-type="output"]');
+      if (!fromOutput) return;
+      
+      const r1 = fromOutput.getBoundingClientRect();
+      const x1 = r1.left - rackRect.left + r1.width/2;
+      const y1 = r1.top - rackRect.top + r1.height/2;
+      const x2 = e.clientX - rackRect.left;
+      const y2 = e.clientY - rackRect.top;
+      
+      const cx = (x1 + x2) / 2;
+      tempLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      tempLine.setAttribute('d', `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`);
+      tempLine.setAttribute('fill', 'none');
+      tempLine.setAttribute('stroke', '#4af74a');
+      tempLine.setAttribute('stroke-width', '2');
+      tempLine.setAttribute('opacity', '0.4');
+      tempLine.setAttribute('stroke-dasharray', '5,5');
+      svgEl.appendChild(tempLine);
+    });
+  }
+
+  function addConnection(fromId, toId) {
+    if (fromId === toId) return;
+    if (connections.some(c => c.from === fromId && c.to === toId)) return;
+    
+    connections.push({ from: fromId, to: toId });
+    
+    // Audio connection
+    const fromComp = components[fromId];
+    if (fromComp && fromComp.outputGain) {
+      if (toId === 'master') {
+        // Connect to master output
+        fromComp.outputGain.connect(masterGain);
+      } else {
+        const toComp = components[toId];
+        if (toComp && toComp.inputGain) {
+          fromComp.outputGain.connect(toComp.inputGain);
+        }
+      }
     }
-    if (components.filter && components.adsr) {
-      components.adsr.connectInput(components.filter);
-    }
-    if (components.adsr && components.effects) {
-      components.effects.connectInput(components.adsr);
-    }
-    if (components.effects) {
-      components.effects.connect({ node: masterGain });
-    }
-    labelConnections();
-  }, 100);
+    
+    drawConnections();
+  }
 
   // Keyboard
   const kb = document.getElementById('keyboard');
@@ -246,17 +369,25 @@ const NOTES = {
 
   function playNote(note) {
     if (ctx.state === 'suspended') ctx.resume();
-    if (components.osc1) {
-      components.osc1.frequency = NOTES[note] || 440;
-      components.osc1.update();
+    const oscId = findComponentByType('oscillator');
+    if (oscId && components[oscId]) {
+      components[oscId].outputGain.gain.setTargetAtTime(1, ctx.currentTime, 0.01);
+      components[oscId].frequency = NOTES[note] || 440;
+      components[oscId].update();
     }
-    if (components.adsr) components.adsr.triggerAttack();
+    const adsrId = findComponentByType('adsr');
+    if (adsrId && components[adsrId]) components[adsrId].triggerAttack();
     document.getElementById('noteDisplay').textContent = note;
     isPlaying = true;
   }
 
   function stopAll() {
-    if (components.adsr) components.adsr.triggerRelease();
+    const oscId = findComponentByType('oscillator');
+    if (oscId && components[oscId]) {
+      components[oscId].outputGain.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+    }
+    const adsrId = findComponentByType('adsr');
+    if (adsrId && components[adsrId]) components[adsrId].triggerRelease();
     document.getElementById('noteDisplay').textContent = '_';
     isPlaying = false;
   }
@@ -272,29 +403,43 @@ const NOTES = {
     fx: { osc1: { on: true, wave: 'noise', freq: 800 }, filter: { type: 'highpass', freq: 2000, q: 1 }, adsr: { a: 0.01, d: 0.05, s: 0.3, r: 0.1 } }
   };
 
+  function findComponentByType(type) {
+    return Object.keys(components).find(id => components[id].type === type);
+  }
+
   document.querySelectorAll('.preset-btn').forEach(b => {
     if (b.dataset.preset) {
       b.addEventListener('click', () => {
         const p = PRESETS[b.dataset.preset];
         if (!p) return;
-        if (p.osc1 && components.osc1) {
-          components.osc1.isOn = p.osc1.on;
-          components.osc1.waveform = p.osc1.wave;
-          components.osc1.frequency = p.osc1.freq;
-          components.osc1.update();
+        
+        if (p.osc1) {
+          const oscId = findComponentByType('oscillator');
+          if (oscId && components[oscId]) {
+            components[oscId].isOn = p.osc1.on;
+            components[oscId].waveform = p.osc1.wave;
+            components[oscId].frequency = p.osc1.freq;
+            components[oscId].update();
+          }
         }
-        if (p.filter && components.filter) {
-          components.filter.filterType = p.filter.type;
-          components.filter.frequency = p.filter.freq;
-          components.filter.Q = p.filter.q;
-          components.filter.update();
+        if (p.filter) {
+          const filterId = findComponentByType('filter');
+          if (filterId && components[filterId]) {
+            components[filterId].filterType = p.filter.type;
+            components[filterId].frequency = p.filter.freq;
+            components[filterId].Q = p.filter.q;
+            components[filterId].update();
+          }
         }
-        if (p.adsr && components.adsr) {
-          components.adsr.attack = p.adsr.a;
-          components.adsr.decay = p.adsr.d;
-          components.adsr.sustain = p.adsr.s;
-          components.adsr.release = p.adsr.r;
-          components.adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
+        if (p.adsr) {
+          const adsrId = findComponentByType('adsr');
+          if (adsrId && components[adsrId]) {
+            components[adsrId].attack = p.adsr.a;
+            components[adsrId].decay = p.adsr.d;
+            components[adsrId].sustain = p.adsr.s;
+            components[adsrId].release = p.adsr.r;
+            components[adsrId].adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
+          }
         }
       });
     }

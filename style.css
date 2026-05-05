@@ -110,12 +110,47 @@ canvas {
   user-select: none;
 }
 
-.component {
-  background: #0d120d;
-  border: 1px solid #2a3a2a;
-  padding: 8px;
-  position: relative;
-  min-height: 120px;
+.component-header {
+  color: #4af74a;
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #1a2a1a;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.close-btn:hover {
+  color: #ff4444;
+  text-shadow: 0 0 5px #ff4444;
+}
+
+.rack-output {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #003300;
+  border: 2px solid #4af74a;
+  cursor: crosshair;
+  z-index: 10;
+}
+
+.rack-output::after {
+  content: 'OUT';
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+  color: #4af74a;
+  letter-spacing: 1px;
 }
 
 .component-header {

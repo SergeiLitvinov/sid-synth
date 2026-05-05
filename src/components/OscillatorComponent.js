@@ -1,4 +1,4 @@
-import { sine, square, triangle, noise } from '../oscillator/index.js';
+import { sine, square, triangle, noise, sawtooth } from '../oscillator/index.js';
 import { AudioComponent } from './AudioComponent.js';
 import { Knob } from './Knob.js';
 
@@ -8,6 +8,7 @@ function createOsc(type, ctx, freq) {
     case 'square': return square(ctx, freq);
     case 'triangle': return triangle(ctx, freq);
     case 'noise': return noise(ctx);
+    case 'sawtooth': return sawtooth(ctx, freq);
     default: return square(ctx, freq);
   }
 }
@@ -18,9 +19,13 @@ export class OscillatorComponent extends AudioComponent {
     this.id = id;
     this.waveform = 'sawtooth';
     this.frequency = 440;
-    this.isOn = id === 1;
+    this.isOn = true;
+    this.inputGain = ctx.createGain();
     this.outputGain = ctx.createGain();
-    this.node = null;
+    this.outputGain.gain.value = 0; // Start silent
+    this.inputGain.connect(this.outputGain);
+    this.node = this.outputGain;
+    this.oscNode = null;
     this.freqKnob = null;
     this.element = this.createElement();
     this.update();
@@ -39,7 +44,7 @@ export class OscillatorComponent extends AudioComponent {
     row1.appendChild(chk);
     
     const sel = document.createElement('select');
-    ['sawtooth', 'square', 'triangle', 'noise'].forEach(w => {
+    ['sawtooth', 'square', 'triangle', 'sine', 'noise'].forEach(w => {
       const opt = document.createElement('option');
       opt.value = w;
       opt.textContent = w.toUpperCase();
@@ -72,38 +77,30 @@ export class OscillatorComponent extends AudioComponent {
 
   update() {
     if (!this.isOn) {
-      if (this.node) {
-        try { this.node.stop(); } catch(e) {}
-        this.node.disconnect();
-        this.node = null;
+      if (this.oscNode) {
+        try { this.oscNode.stop(); } catch(e) {}
+        this.oscNode.disconnect();
+        this.oscNode = null;
       }
-      this.outputGain.gain.value = 0;
+      this.outputGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
       return;
     }
-    this.outputGain.gain.value = 1;
-    const newOsc = createOsc(this.waveform, this.ctx, this.frequency);
-    if (this.node) {
-      try { this.node.stop(); } catch(e) {}
-      this.node.disconnect();
+    if (this.oscNode) {
+      try { this.oscNode.stop(); } catch(e) {}
+      this.oscNode.disconnect();
     }
-    this.node = newOsc;
-    this.node.connect(this.outputGain);
-    try { this.node.start(); } catch(e) {}
-  }
-
-  connect(dest) {
-    if (this.outputGain && dest.node) {
-      this.outputGain.connect(dest.node);
-      this.isConnected = true;
-    }
+    this.oscNode = createOsc(this.waveform, this.ctx, this.frequency);
+    this.oscNode.connect(this.outputGain);
+    try { this.oscNode.start(); } catch(e) {}
   }
 
   dispose() {
-    if (this.node) {
-      try { this.node.stop(); } catch(e) {}
-      this.node.disconnect();
-      this.node = null;
+    if (this.oscNode) {
+      try { this.oscNode.stop(); } catch(e) {}
+      this.oscNode.disconnect();
+      this.oscNode = null;
     }
+    this.inputGain.disconnect();
     this.outputGain.disconnect();
     this.isConnected = false;
   }

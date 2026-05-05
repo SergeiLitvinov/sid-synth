@@ -17,7 +17,16 @@ export class AudioComponent {
     
     const header = document.createElement('div');
     header.className = 'component-header';
-    header.textContent = this.label;
+    
+    const title = document.createElement('span');
+    title.textContent = this.label;
+    header.appendChild(title);
+    
+    const closeBtn = document.createElement('span');
+    closeBtn.className = 'close-btn';
+    closeBtn.textContent = '×';
+    closeBtn.style.cssText = 'cursor:pointer;margin-left:auto;font-size:18px;padding:0 5px;';
+    header.appendChild(closeBtn);
     
     const body = document.createElement('div');
     body.className = 'component-body';
@@ -26,6 +35,7 @@ export class AudioComponent {
     el.appendChild(body);
     
     this.element = el;
+    this.closeBtn = closeBtn;
     return el;
   }
 

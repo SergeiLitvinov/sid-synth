@@ -18,9 +18,11 @@ export class FilterComponent extends AudioComponent {
     this.frequency = 2000;
     this.Q = 1;
     this.inputGain = ctx.createGain();
+    this.outputGain = ctx.createGain();
     this.filterNode = createFilter(this.filterType, ctx, this.frequency, this.Q);
     this.inputGain.connect(this.filterNode);
-    this.node = this.filterNode;
+    this.filterNode.connect(this.outputGain);
+    this.node = this.outputGain;
     this.freqKnob = null;
     this.qKnob = null;
     this.element = this.createElement();
@@ -80,30 +82,19 @@ export class FilterComponent extends AudioComponent {
   }
 
   update() {
-    this.filterNode.disconnect();
+    const oldNode = this.filterNode;
     this.filterNode = createFilter(this.filterType, this.ctx, this.frequency, this.Q);
     this.inputGain.disconnect();
     this.inputGain.connect(this.filterNode);
-    this.filterNode.connect(this.node);
-  }
-
-  connect(dest) {
-    if (this.filterNode && dest.node) {
-      this.filterNode.connect(dest.node);
-      this.isConnected = true;
-    }
-  }
-
-  connectInput(source) {
-    if (source.node && this.inputGain) {
-      source.node.connect(this.inputGain);
-    }
+    this.filterNode.connect(this.outputGain);
+    if (oldNode) oldNode.disconnect();
   }
 
   dispose() {
     if (this.filterNode) {
       this.filterNode.disconnect();
       this.inputGain.disconnect();
+      this.outputGain.disconnect();
       this.isConnected = false;
     }
   }
