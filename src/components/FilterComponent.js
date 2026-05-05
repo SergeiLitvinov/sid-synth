@@ -17,9 +17,12 @@ export class FilterComponent extends AudioComponent {
     this.filterType = 'lowpass';
     this.frequency = 2000;
     this.Q = 1;
+    this.inputGain = ctx.createGain();
+    this.filterNode = createFilter(this.filterType, ctx, this.frequency, this.Q);
+    this.inputGain.connect(this.filterNode);
+    this.node = this.filterNode;
     this.freqKnob = null;
     this.qKnob = null;
-    this.node = createFilter(this.filterType, ctx, this.frequency, this.Q);
     this.element = this.createElement();
   }
 
@@ -27,7 +30,6 @@ export class FilterComponent extends AudioComponent {
     const el = super.createElement();
     const body = el.querySelector('.component-body');
 
-    // Type select
     const row1 = document.createElement('div');
     row1.className = 'param-row';
     const sel = document.createElement('select');
@@ -42,7 +44,6 @@ export class FilterComponent extends AudioComponent {
     row1.appendChild(sel);
     body.appendChild(row1);
 
-    // Frequency knob
     this.freqKnob = new Knob({
       min: 20,
       max: 20000,
@@ -53,7 +54,6 @@ export class FilterComponent extends AudioComponent {
     });
     body.appendChild(this.freqKnob.element);
 
-    // Q knob
     this.qKnob = new Knob({
       min: 0.1,
       max: 20,
@@ -64,14 +64,12 @@ export class FilterComponent extends AudioComponent {
     });
     body.appendChild(this.qKnob.element);
 
-    // Input dot
     const inp = document.createElement('div');
     inp.className = 'conn-point conn-input';
     inp.dataset.type = 'input';
     inp.dataset.id = 'filter';
     el.appendChild(inp);
 
-    // Output dot
     const out = document.createElement('div');
     out.className = 'conn-point conn-output';
     out.dataset.type = 'output';
@@ -82,28 +80,30 @@ export class FilterComponent extends AudioComponent {
   }
 
   update() {
-    if (this.node) {
-      this.node.disconnect();
-    }
-    this.node = createFilter(this.filterType, this.ctx, this.frequency, this.Q);
+    this.filterNode.disconnect();
+    this.filterNode = createFilter(this.filterType, this.ctx, this.frequency, this.Q);
+    this.inputGain.disconnect();
+    this.inputGain.connect(this.filterNode);
+    this.filterNode.connect(this.node);
   }
 
   connect(dest) {
-    if (this.node && dest.node) {
-      this.node.connect(dest.node);
+    if (this.filterNode && dest.node) {
+      this.filterNode.connect(dest.node);
       this.isConnected = true;
     }
   }
 
   connectInput(source) {
-    if (source.node && this.node) {
-      source.node.connect(this.node);
+    if (source.node && this.inputGain) {
+      source.node.connect(this.inputGain);
     }
   }
 
   dispose() {
-    if (this.node) {
-      this.node.disconnect();
+    if (this.filterNode) {
+      this.filterNode.disconnect();
+      this.inputGain.disconnect();
       this.isConnected = false;
     }
   }

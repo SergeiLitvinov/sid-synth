@@ -19,16 +19,17 @@ export class OscillatorComponent extends AudioComponent {
     this.waveform = 'sawtooth';
     this.frequency = 440;
     this.isOn = id === 1;
+    this.outputGain = ctx.createGain();
     this.node = null;
     this.freqKnob = null;
     this.element = this.createElement();
+    this.update();
   }
 
   createElement() {
     const el = super.createElement();
     const body = el.querySelector('.component-body');
 
-    // Checkbox on/off
     const row1 = document.createElement('div');
     row1.className = 'param-row';
     const chk = document.createElement('input');
@@ -37,7 +38,6 @@ export class OscillatorComponent extends AudioComponent {
     chk.onchange = () => { this.isOn = chk.checked; this.update(); };
     row1.appendChild(chk);
     
-    // Waveform select
     const sel = document.createElement('select');
     ['sawtooth', 'square', 'triangle', 'noise'].forEach(w => {
       const opt = document.createElement('option');
@@ -50,7 +50,6 @@ export class OscillatorComponent extends AudioComponent {
     row1.appendChild(sel);
     body.appendChild(row1);
 
-    // Frequency knob
     this.freqKnob = new Knob({
       min: 20,
       max: 2000,
@@ -62,7 +61,6 @@ export class OscillatorComponent extends AudioComponent {
     });
     body.appendChild(this.freqKnob.element);
 
-    // Output dot
     const out = document.createElement('div');
     out.className = 'conn-point conn-output';
     out.dataset.type = 'output';
@@ -73,20 +71,29 @@ export class OscillatorComponent extends AudioComponent {
   }
 
   update() {
-    if (!this.isOn && this.node) {
-      this.dispose();
-      this.node = null;
+    if (!this.isOn) {
+      if (this.node) {
+        try { this.node.stop(); } catch(e) {}
+        this.node.disconnect();
+        this.node = null;
+      }
+      this.outputGain.gain.value = 0;
       return;
     }
-    if (!this.isOn) return;    
-    if (this.node) { try { this.node.stop(); } catch(e) {} this.node.disconnect(); }
-    this.node = createOsc(this.waveform, this.ctx, this.frequency);
+    this.outputGain.gain.value = 1;
+    const newOsc = createOsc(this.waveform, this.ctx, this.frequency);
+    if (this.node) {
+      try { this.node.stop(); } catch(e) {}
+      this.node.disconnect();
+    }
+    this.node = newOsc;
+    this.node.connect(this.outputGain);
     try { this.node.start(); } catch(e) {}
   }
 
   connect(dest) {
-    if (this.node && dest.node) {
-      this.node.connect(dest.node);
+    if (this.outputGain && dest.node) {
+      this.outputGain.connect(dest.node);
       this.isConnected = true;
     }
   }
@@ -97,6 +104,7 @@ export class OscillatorComponent extends AudioComponent {
       this.node.disconnect();
       this.node = null;
     }
+    this.outputGain.disconnect();
     this.isConnected = false;
   }
 }

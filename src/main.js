@@ -7,7 +7,6 @@ import { EffectsComponent } from './components/EffectsComponent.js';
 console.log('SID Synth Modular loaded');
 
 const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.63, 'F': 349.23, 'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88 };
-const KEY_MAP = { 'a': 'C', 'w': 'C#', 's': 'D', 'e': 'D#', 'd': 'E', 'f': 'F', 't': 'F#', 'g': 'G', 'y': 'G#', 'h': 'A', 'u': 'A#', 'j': 'B' };
 
 (async () => {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -45,30 +44,20 @@ const KEY_MAP = { 'a': 'C', 'w': 'C#', 's': 'D', 'e': 'D#', 'd': 'E', 'f': 'F', 
   components.osc1 = new OscillatorComponent(ctx, 1);
   rack.appendChild(components.osc1.element);
 
-  components.osc2 = new OscillatorComponent(ctx, 2);
-  rack.appendChild(components.osc2.element);
-
   components.filter = new FilterComponent(ctx);
   rack.appendChild(components.filter.element);
 
   components.adsr = new AdsrComponent(ctx);
   rack.appendChild(components.adsr.element);
 
-  components.lfo = new LfoComponent(ctx);
-  rack.appendChild(components.lfo.element);
-  // Start LFO after user gesture
-  document.body.addEventListener('click', function initLfo() {
-    components.lfo.startLfo();
-    document.body.removeEventListener('click', initLfo);
-  }, { once: true });
-
   components.effects = new EffectsComponent(ctx);
   rack.appendChild(components.effects.element);
 
-  // Default connection
+  // Default connection: osc1 -> filter -> adsr -> effects -> master
   components.osc1.connect(components.filter);
-  components.filter.connect(components.adsr);
-  components.adsr.connect(components.effects);
+  components.filter.connectInput(components.osc1);
+  components.adsr.connectInput(components.filter);
+  components.effects.connectInput(components.adsr);
   components.effects.connect({ node: masterGain });
 
   // Keyboard
@@ -104,7 +93,10 @@ const KEY_MAP = { 'a': 'C', 'w': 'C#', 's': 'D', 'e': 'D#', 'd': 'E', 'f': 'F', 
     isPlaying = false;
   }
 
-  document.getElementById('play').onclick = () => { if (ctx.state === 'suspended') ctx.resume(); playNote('C'); };
+  document.getElementById('play').onclick = () => { 
+    if (ctx.state === 'suspended') ctx.resume(); 
+    playNote('C'); 
+  };
 
   // Visualization
   function draw() {

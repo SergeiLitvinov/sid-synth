@@ -9,7 +9,9 @@ export class AdsrComponent extends AudioComponent {
     this.decay = 0.2;
     this.sustain = 0.6;
     this.release = 0.25;
+    this.inputGain = ctx.createGain();
     this.adsr = new Adsr(ctx, { attack: this.attack, decay: this.decay, sustain: this.sustain, release: this.release });
+    this.inputGain.connect(this.adsr.gain);
     this.node = this.adsr.gain;
     this.knobs = {};
     this.element = this.createElement();
@@ -38,14 +40,12 @@ export class AdsrComponent extends AudioComponent {
       body.appendChild(this.knobs[p.key].element);
     });
 
-    // Input dot
     const inp = document.createElement('div');
     inp.className = 'conn-point conn-input';
     inp.dataset.type = 'input';
     inp.dataset.id = 'adsr';
     el.appendChild(inp);
 
-    // Output dot
     const out = document.createElement('div');
     out.className = 'conn-point conn-output';
     out.dataset.type = 'output';
@@ -65,9 +65,16 @@ export class AdsrComponent extends AudioComponent {
     }
   }
 
+  connectInput(source) {
+    if (source.node && this.inputGain) {
+      source.node.connect(this.inputGain);
+    }
+  }
+
   dispose() {
     if (this.adsr) {
       this.adsr.dispose();
+      this.inputGain.disconnect();
       this.isConnected = false;
     }
   }

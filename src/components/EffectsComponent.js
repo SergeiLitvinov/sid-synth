@@ -12,12 +12,14 @@ export class EffectsComponent extends AudioComponent {
     this.delayFeedback = 0.4;
     this.reverbDuration = 2.0;
     this.reverbDecay = 0.5;
+    this.inputGain = ctx.createGain();
+    this.outputGain = ctx.createGain();
+    this.inputGain.connect(this.outputGain);
+    this.node = this.outputGain;
     this.delay = null;
     this.reverb = null;
-    this.input = ctx.createGain();
-    this.output = ctx.createGain();
-    this.input.connect(this.output);
-    this.node = this.output;
+    this.delayKnob = null;
+    this.reverbKnob = null;
     this.element = this.createElement();
   }
 
@@ -25,7 +27,6 @@ export class EffectsComponent extends AudioComponent {
     const el = super.createElement();
     const body = el.querySelector('.component-body');
 
-    // Delay
     const row1 = document.createElement('div');
     row1.className = 'param-row';
     const chk1 = document.createElement('input');
@@ -49,7 +50,6 @@ export class EffectsComponent extends AudioComponent {
     });
     body.appendChild(this.delayKnob.element);
 
-    // Reverb
     const row2 = document.createElement('div');
     row2.className = 'param-row';
     const chk2 = document.createElement('input');
@@ -73,14 +73,12 @@ export class EffectsComponent extends AudioComponent {
     });
     body.appendChild(this.reverbKnob.element);
 
-    // Input
     const inp = document.createElement('div');
     inp.className = 'conn-point conn-input';
     inp.dataset.type = 'input';
     inp.dataset.id = 'effects';
     el.appendChild(inp);
 
-    // Output
     const out = document.createElement('div');
     out.className = 'conn-point conn-output';
     out.dataset.type = 'output';
@@ -91,13 +89,11 @@ export class EffectsComponent extends AudioComponent {
   }
 
   update() {
-    // Clean up old effects
     if (this.delay) { this.delay.disconnect(); this.delay = null; }
     if (this.reverb) { this.reverb.disconnect(); this.reverb = null; }
     
-    // Rebuild chain
-    this.input.disconnect();
-    let last = this.input;
+    this.inputGain.disconnect();
+    let last = this.inputGain;
     
     if (this.delayOn) {
       this.delay = new Delay(this.ctx, { time: this.delayTime, feedback: this.delayFeedback });
@@ -111,19 +107,27 @@ export class EffectsComponent extends AudioComponent {
       last = this.reverb;
     }
     
-    last.connect(this.output);
+    last.connect(this.outputGain);
   }
 
   connect(dest) {
-    if (this.output && dest.node) {
-      this.output.connect(dest.node);
+    if (this.outputGain && dest.node) {
+      this.outputGain.connect(dest.node);
       this.isConnected = true;
+    }
+  }
+
+  connectInput(source) {
+    if (source.node && this.inputGain) {
+      source.node.connect(this.inputGain);
     }
   }
 
   dispose() {
     if (this.delay) this.delay.disconnect();
     if (this.reverb) this.reverb.disconnect();
+    this.inputGain.disconnect();
+    this.outputGain.disconnect();
     this.isConnected = false;
   }
 }
