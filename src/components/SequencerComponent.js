@@ -22,12 +22,12 @@ export class SequencerComponent extends AudioComponent {
     lbl.className = 'param-label';
     lbl.textContent = 'BPM';
     row1.appendChild(lbl);
-    const inp = document.createElement('input');
-    inp.type = 'number';
-    inp.value = 120;
-    inp.style.width = '55px';
-    inp.onchange = () => { this.seq.setBpm(+inp.value); };
-    row1.appendChild(inp);
+    const inp1 = document.createElement('input');
+    inp1.type = 'number';
+    inp1.value = 120;
+    inp1.style.width = '55px';
+    inp1.onchange = () => { this.seq.setBpm(+inp1.value); };
+    row1.appendChild(inp1);
     body.appendChild(row1);
 
     // Play/Stop buttons
@@ -69,11 +69,11 @@ export class SequencerComponent extends AudioComponent {
     body.appendChild(grid);
 
     // Input
-    const inp = document.createElement('div');
-    inp.className = 'conn-point conn-input';
-    inp.dataset.type = 'input';
-    inp.dataset.id = 'sequencer';
-    el.appendChild(inp);
+    const inp2 = document.createElement('div');
+    inp2.className = 'conn-point conn-input';
+    inp2.dataset.type = 'input';
+    inp2.dataset.id = 'sequencer';
+    el.appendChild(inp2);
 
     // Output
     const out = document.createElement('div');
@@ -86,9 +86,9 @@ export class SequencerComponent extends AudioComponent {
   }
 
   connect(dest) {
-    if (this.seq && dest.node) {
+    if (this.seq && dest.playNote) {
       this.seq.onStep = (step, note) => {
-        if (note && dest.playNote) dest.playNote(note);
+        if (note) dest.playNote(note);
       };
       this.isConnected = true;
     }
