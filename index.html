@@ -314,6 +314,20 @@
     </div>
 
     <div class="panel">
+      <h2>EFFECTS</h2>
+      <div class="row">
+        <label><input type="checkbox" id="delayOn"> DELAY</label>
+        <input type="number" id="delayTime" value="0.3" step="0.1" placeholder="TIME" style="width:55px">
+        <input type="number" id="delayFeedback" value="0.4" step="0.1" placeholder="FB" style="width:45px">
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label><input type="checkbox" id="reverbOn"> REVERB</label>
+        <input type="number" id="reverbDuration" value="2" step="0.1" placeholder="TIME" style="width:55px">
+        <input type="number" id="reverbDecay" value="0.5" step="0.1" placeholder="DEC" style="width:45px">
+      </div>
+    </div>
+
+    <div class="panel">
       <h2>SEQUENCER</h2>
       <div class="row">
         <button class="btn" id="seqPlay">PLAY</button>

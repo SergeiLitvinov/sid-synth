@@ -3,6 +3,7 @@ import { create as createOsc } from './oscillator/index.js';
 import { create as createFilter } from './filter/index.js';
 import { Lfo, Pwm, RingMod, HardSync } from './modulator/index.js';
 import { PatternSequencer } from './sequencer/pattern.js';
+import { Delay, Reverb } from './effects/index.js';
 
 console.log('SID Synth loaded');
 
@@ -47,6 +48,8 @@ const NOTE_NAMES = Object.keys(NOTES);
   let pwm = null;
   let ringMod = null;
   let hardSync = null;
+  let delay = null;
+  let reverb = null;
 
   function stopAll() {
     activeNodes.forEach(n => { try { if (n && n.stop) n.stop(); if (n && n.disconnect) n.disconnect(); } catch(e) {} });
@@ -56,6 +59,8 @@ const NOTE_NAMES = Object.keys(NOTES);
     if (pwm) { pwm.dispose(); pwm = null; }
     if (ringMod) { ringMod.dispose(); ringMod = null; }
     if (hardSync) { hardSync = null; }
+    if (delay) { delay.disconnect(); delay = null; }
+    if (reverb) { reverb.disconnect(); reverb = null; }
     if (arpTimer) { clearInterval(arpTimer); arpTimer = null; }
     isPlaying = false;
     document.getElementById('noteDisplay').textContent = '_';
@@ -143,13 +148,38 @@ const NOTE_NAMES = Object.keys(NOTES);
       hardSync.connect(o1, o2);
     }
 
-    filterNode.connect(adsr.gain);
+    // Effects
+    let lastNode = filterNode;
+    let delayNode = null;
+    let reverbNode = null;
+
+    if (document.getElementById('delayOn')?.checked) {
+      delay = new Delay(ctx, {
+        time: +document.getElementById('delayTime')?.value || 0.3,
+        feedback: +document.getElementById('delayFeedback')?.value || 0.4
+      });
+      lastNode.connect(delay.input);
+      lastNode = delay;
+      delayNode = delay;
+    }
+
+    if (document.getElementById('reverbOn')?.checked) {
+      reverb = new Reverb(ctx, {
+        duration: +document.getElementById('reverbDuration')?.value || 2.0,
+        decay: +document.getElementById('reverbDecay')?.value || 0.5
+      });
+      lastNode.connect(reverb.input);
+      lastNode = reverb;
+      reverbNode = reverb;
+    }
+
+    lastNode.connect(adsr.gain);
     adsr.connect(masterGain);
 
     oscNodes.forEach(o => { try { o.start(); } catch(e) {} });
     adsr.triggerAttack();
 
-    activeNodes = [...oscNodes, filterNode, adsr, lfoNode, pwmNode, ringNode].filter(Boolean);
+    activeNodes = [...oscNodes, filterNode, adsr, lfoNode, pwmNode, ringNode, delayNode, reverbNode].filter(Boolean);
 
     document.getElementById('noteDisplay').textContent = note;
 
@@ -252,7 +282,13 @@ const NOTE_NAMES = Object.keys(NOTES);
       pwmRate: document.getElementById('pwmRate')?.value,
       pwmDepth: document.getElementById('pwmDepth')?.value,
       ringModOn: document.getElementById('ringModOn')?.checked,
-      hardSyncOn: document.getElementById('hardSyncOn')?.checked
+      hardSyncOn: document.getElementById('hardSyncOn')?.checked,
+      delayOn: document.getElementById('delayOn')?.checked,
+      delayTime: document.getElementById('delayTime')?.value,
+      delayFeedback: document.getElementById('delayFeedback')?.value,
+      reverbOn: document.getElementById('reverbOn')?.checked,
+      reverbDuration: document.getElementById('reverbDuration')?.value,
+      reverbDecay: document.getElementById('reverbDecay')?.value
     };
   }
 
@@ -282,6 +318,12 @@ const NOTE_NAMES = Object.keys(NOTES);
     if (s.pwmDepth) document.getElementById('pwmDepth').value = s.pwmDepth;
     if (s.ringModOn !== undefined) document.getElementById('ringModOn').checked = s.ringModOn;
     if (s.hardSyncOn !== undefined) document.getElementById('hardSyncOn').checked = s.hardSyncOn;
+    if (s.delayOn !== undefined) document.getElementById('delayOn').checked = s.delayOn;
+    if (s.delayTime) document.getElementById('delayTime').value = s.delayTime;
+    if (s.delayFeedback) document.getElementById('delayFeedback').value = s.delayFeedback;
+    if (s.reverbOn !== undefined) document.getElementById('reverbOn').checked = s.reverbOn;
+    if (s.reverbDuration) document.getElementById('reverbDuration').value = s.reverbDuration;
+    if (s.reverbDecay) document.getElementById('reverbDecay').value = s.reverbDecay;
   }
 
   function updatePresetList() {
