@@ -5,14 +5,21 @@ import { Knob } from './Knob.js';
 export class LfoComponent extends AudioComponent {
   constructor(ctx) {
     super(ctx, 'lfo', 'LFO');
+    this.ctx = ctx;
     this.rate = 1;
     this.depth = 50;
     this.waveType = 'sine';
-    this.lfo = new Lfo(ctx, { type: this.waveType, rate: this.rate, depth: this.depth });
-    this.node = this.lfo.gain;
+    this.lfo = null;
+    this.node = ctx.createGain(); // temporary gain node
     this.rateKnob = null;
     this.depthKnob = null;
     this.element = this.createElement();
+  }
+
+  startLfo() {
+    if (this.lfo) return;
+    this.lfo = new Lfo(this.ctx, { type: this.waveType, rate: this.rate, depth: this.depth });
+    this.lfo.connect(this.node);
   }
 
   createElement() {
@@ -30,7 +37,7 @@ export class LfoComponent extends AudioComponent {
       sel.appendChild(opt);
     });
     sel.value = this.waveType;
-    sel.onchange = () => { this.waveType = sel.value; this.lfo.setType(this.waveType); };
+    sel.onchange = () => { this.waveType = sel.value; if (this.lfo) this.lfo.setType(this.waveType); };
     row1.appendChild(sel);
     body.appendChild(row1);
 
@@ -42,7 +49,7 @@ export class LfoComponent extends AudioComponent {
       step: 0.1,
       label: 'RATE',
       unit: 'Hz',
-      onChange: (val) => { this.rate = val; this.lfo.setRate(val); }
+      onChange: (val) => { this.rate = val; if (this.lfo) this.lfo.setRate(val); }
     });
     body.appendChild(this.rateKnob.element);
 
@@ -53,7 +60,7 @@ export class LfoComponent extends AudioComponent {
       value: this.depth,
       step: 1,
       label: 'DEP',
-      onChange: (val) => { this.depth = val; this.lfo.setDepth(val); }
+      onChange: (val) => { this.depth = val; if (this.lfo) this.lfo.setDepth(val); }
     });
     body.appendChild(this.depthKnob.element);
 

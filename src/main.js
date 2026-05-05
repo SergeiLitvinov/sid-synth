@@ -56,6 +56,11 @@ const KEY_MAP = { 'a': 'C', 'w': 'C#', 's': 'D', 'e': 'D#', 'd': 'E', 'f': 'F', 
 
   components.lfo = new LfoComponent(ctx);
   rack.appendChild(components.lfo.element);
+  // Start LFO after user gesture
+  document.body.addEventListener('click', function initLfo() {
+    components.lfo.startLfo();
+    document.body.removeEventListener('click', initLfo);
+  }, { once: true });
 
   components.effects = new EffectsComponent(ctx);
   rack.appendChild(components.effects.element);
@@ -85,6 +90,7 @@ const KEY_MAP = { 'a': 'C', 'w': 'C#', 's': 'D', 'e': 'D#', 'd': 'E', 'f': 'F', 
 
   function playNote(note) {
     if (ctx.state === 'suspended') ctx.resume();
+    if (!components.lfo.lfo) components.lfo.startLfo();
     components.osc1.frequency = NOTES[note] || 440;
     components.osc1.update();
     components.adsr.triggerAttack();
