@@ -72,7 +72,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     const id = e.dataTransfer.getData('id');
     const rect = rack.getBoundingClientRect();
     const x = e.clientX - rect.left - 100;
-    const y = e.clientY - rect.top - 30;
+    const y = e.clientY - rect.top - 20;
     createComponent(type, id, x, y);
   });
 
@@ -114,6 +114,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     comp.element.style.left = Math.max(0, x) + 'px';
     comp.element.style.top = Math.max(0, y) + 'px';
     makeDraggable(comp.element);
+    labelConnections();
   }
 
   function makeDraggable(el) {
@@ -139,7 +140,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
       y = Math.max(0, Math.min(y, rackRect.height - el.offsetHeight));
       el.style.left = x + 'px';
       el.style.top = y + 'px';
-      drawConnections();
+      labelConnections();
     });
 
     document.addEventListener('mouseup', () => {
@@ -150,10 +151,10 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     });
   }
 
-  function drawConnections() {
+  function labelConnections() {
     while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
     
-    // Draw connections between connected components
+    // Draw connections between components
     Object.keys(components).forEach(fromId => {
       const fromComp = components[fromId];
       if (!fromComp || !fromComp.element) return;
@@ -161,7 +162,6 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
       const fromOutput = fromComp.element.querySelector('[data-type="output"]');
       if (!fromOutput) return;
       
-      // Find components connected to this output
       Object.keys(components).forEach(toId => {
         if (toId === fromId) return;
         const toComp = components[toId];
@@ -170,7 +170,6 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
         const toInput = toComp.element.querySelector('[data-type="input"]');
         if (!toInput) return;
         
-        // Check if connected (simplified - just draw if both exist)
         const r1 = fromOutput.getBoundingClientRect();
         const r2 = toInput.getBoundingClientRect();
         const rackRect = rack.getBoundingClientRect();
@@ -180,27 +179,37 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
         const x2 = r2.left - rackRect.left + r2.width/2;
         const y2 = r2.top - rackRect.top + r2.height/2;
         
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x1);
-        line.setAttribute('y1', y1);
-        line.setAttribute('x2', x2);
-        line.setAttribute('y2', y2);
-        line.setAttribute('stroke', '#4af74a');
-        line.setAttribute('stroke-width', '2');
-        line.setAttribute('opacity', '0.7');
-        svgEl.appendChild(line);
+        // Draw smooth curve
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const cx = (x1 + x2) / 2;
+        const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+        path.setAttribute('d', d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', '#4af74a');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('opacity', '0.7');
+        svgEl.appendChild(path);
+        
+        // Label
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', (x1 + x2) / 2);
+        label.setAttribute('y', (y1 + y2) / 2 - 5);
+        label.setAttribute('fill', '#4af74a');
+        label.setAttribute('font-size', '8px');
+        label.textContent = `${fromId} → ${toId}`;
+        svgEl.appendChild(label);
       });
     });
   }
 
   // Create default components
-  createComponent('oscillator', 'osc1', 50, 50);
-  createComponent('filter', 'filter', 270, 50);
-  createComponent('adsr', 'adsr', 490, 50);
-  createComponent('effects', 'effects', 50, 220);
-  
-  // Connect default chain: osc1 -> filter -> adsr -> effects -> master
   setTimeout(() => {
+    createComponent('oscillator', 'osc1', 50, 50);
+    createComponent('filter', 'filter', 270, 50);
+    createComponent('adsr', 'adsr', 490, 50);
+    createComponent('effects', 'effects', 50, 220);
+    
+    // Connect default chain
     if (components.osc1 && components.filter) {
       components.osc1.connect(components.filter);
       components.filter.connectInput(components.osc1);
@@ -214,7 +223,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     if (components.effects) {
       components.effects.connect({ node: masterGain });
     }
-    drawConnections();
+    labelConnections();
   }, 100);
 
   // Keyboard
@@ -286,7 +295,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     let barX = 0;
     for (let i = 0; i < freqData.length; i++) {
       const barHeight = (freqData[i] / 255.0) * sh;
-      specCvs.fillStyle = `hsl(${((i / freqData.length) * 120 + 80)}, 70%, 50%)`;
+      specCvs.fillStyle = `hsl(${(i / freqData.length) * 120 + 80}, 70%, 50%)`;
       specCvs.fillRect(barX, sh - barHeight, barWidth, barHeight);
       barX += barWidth + 1;
     }

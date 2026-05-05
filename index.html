@@ -16,9 +16,9 @@
       <div class="note-display" id="noteDisplay">_</div>
     </div>
 
-    <div class="workspace">
-      <div class="toolbar" id="toolbar">
-        <div class="toolbar-title">COMPONENTS</div>
+  <div class="workspace">
+      <div class="tool-bar" id="tool-bar">
+        <div class="tool-bar-title">COMPONENTS</div>
         <div class="tool-item" data-type="oscillator" data-id="osc1">OSC 1</div>
         <div class="tool-item" data-type="oscillator" data-id="osc2">OSC 2</div>
         <div class="tool-item" data-type="oscillator" data-id="osc3">OSC 3</div>
@@ -29,6 +29,20 @@
         <div class="tool-item" data-type="mixer">MIXER</div>
         <div class="tool-item" data-type="splitter">SPLITTER</div>
         <div class="tool-item" data-type="sequencer">SEQ</div>
+      </div>
+      <div class="rack" id="rack">
+        <svg class="connection-line" id="connectionsSvg"></svg>
+      </div>
+    </div>
+
+    <div class="keyboard" id="keyboard"></div>
+
+    <div class="panel">
+      <div class="row row-center">
+        <button class="preset-btn" data-preset="bass">BASS</button>
+        <button class="preset-btn" data-preset="lead">LEAD</button>
+        <button class="preset-btn" data-preset="pad">PAD</button>
+        <button class="preset-btn" data-preset="drum">DRUM</button>
       </div>
       <div class="rack" id="rack">
         <svg class="connection-line" id="connectionsSvg"></svg>
