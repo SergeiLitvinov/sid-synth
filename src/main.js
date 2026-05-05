@@ -239,6 +239,39 @@ const NOTES = {
       path.style.cursor = 'pointer';
       path.title = `Click to delete ${conn.from} → ${toLabel}`;
       path.dataset.index = index;
+      path.style.pointerEvents = 'all';
+      
+      path.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const idx = parseInt(path.dataset.index);
+        console.log('Cable clicked! Index:', idx);
+        if (!isNaN(idx)) deleteConnection(idx);
+      });
+      
+      svgEl.appendChild(path);
+      
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', (x1 + x2) / 2);
+      label.setAttribute('y', (y1 + y2) / 2 - 5);
+      label.setAttribute('fill', '#4af74a');
+      label.setAttribute('font-size', '8px');
+      label.textContent = `${conn.from} → ${toLabel}`;
+      svgEl.appendChild(label);
+    });
+  }
+      
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const cx = (x1 + x2) / 2;
+      const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', '#4af74a');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('opacity', '0.7');
+      path.style.cursor = 'pointer';
+      path.title = `Click to delete ${conn.from} → ${toLabel}`;
+      path.dataset.index = index;
       
       path.addEventListener('click', () => deleteConnection(index));
       
