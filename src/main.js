@@ -254,27 +254,7 @@ const NOTES = {
       svgEl.appendChild(label);
     });
   }
-      
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const cx = (x1 + x2) / 2;
-      const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
-      path.setAttribute('d', d);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', '#4af74a');
-      path.setAttribute('stroke-width', '2');
-      path.setAttribute('opacity', '0.7');
-      svgEl.appendChild(path);
-      
-      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      label.setAttribute('x', (x1 + x2) / 2);
-      label.setAttribute('y', (y1 + y2) / 2 - 5);
-      label.setAttribute('fill', '#4af74a');
-      label.setAttribute('font-size', '8px');
-      label.textContent = `${conn.from} → ${toLabel}`;
-      svgEl.appendChild(label);
-    });
-  }
-
+  
   function deleteConnection(index) {
     if (index < 0 || index >= connections.length) return;
     const conn = connections[index];
@@ -445,18 +425,22 @@ const NOTES = {
 
   // Keyboard
   const kb = document.getElementById('keyboard');
-  Object.keys(NOTES).forEach(n => {
-    const k = document.createElement('div');
-    k.className = 'key' + (n.includes('#') ? ' sharp' : '');
-    k.textContent = n;
-    k.addEventListener('mousedown', () => {
-      if (ctx.state === 'suspended') ctx.resume();
-      playNote(n);
+  if (kb) {
+    Object.keys(NOTES).forEach(n => {
+      const k = document.createElement('div');
+      k.className = 'key' + (n.includes('#') ? ' sharp' : '');
+      k.textContent = n;
+      k.addEventListener('mousedown', () => {
+        if (ctx.state === 'suspended') ctx.resume();
+        playNote(n);
+      });
+      k.addEventListener('mouseup', () => stopAll());
+      k.addEventListener('mouseleave', () => { if (!isPlaying) stopAll(); });
+      kb.appendChild(k);
     });
-    k.addEventListener('mouseup', () => stopAll());
-    k.addEventListener('mouseleave', () => { if (!isPlaying) stopAll(); });
-    kb.appendChild(k);
-  });
+  } else {
+    console.error('Keyboard element not found!');
+  }
 
   let isPlaying = false;
 
