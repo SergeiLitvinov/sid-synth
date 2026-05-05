@@ -1,0 +1,239 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+* { box-sizing: border-box; }
+body { 
+  font-family: 'Share Tech Mono', monospace; 
+  background: #0a0f0a; 
+  color: #4af74a; 
+  margin: 0; 
+  padding: 15px;
+  font-size: 14px;
+  overflow-x: hidden;
+}
+
+.container { max-width: 1000px; margin: 0 auto; }
+
+.header {
+  text-align: center;
+  font-size: 24px;
+  color: #4af74a;
+  margin-bottom: 12px;
+  letter-spacing: 8px;
+  text-shadow: 0 0 20px #4af74a;
+}
+
+.screen {
+  background: #000;
+  border: 2px solid #4af74a;
+  box-shadow: 0 0 30px #4af7430, inset 0 0 60px #000;
+  padding: 6px;
+  margin-bottom: 15px;
+}
+
+canvas {
+  width: 100%;
+  display: block;
+  border: 1px solid #1a2a1a;
+}
+
+.note-display { 
+  text-align: center; 
+  color: #4af74a; 
+  font-size: 42px; 
+  height: 48px; 
+  text-shadow: 0 0 25px #4af74a, 0 0 50px #4af7433;
+  letter-spacing: 8px;
+  margin-top: 8px;
+}
+
+.rack {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.component {
+  background: #0d120d;
+  border: 1px solid #2a3a2a;
+  padding: 8px;
+  position: relative;
+  min-height: 120px;
+}
+
+.component-header {
+  color: #4af74a;
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #1a2a1a;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.component-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.conn-point {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #1a2a1a;
+  border: 1px solid #4af74a;
+  cursor: pointer;
+  display: inline-block;
+}
+
+.conn-point.active { background: #4af74a; }
+
+.conn-input {
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.conn-output {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.param-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.param-label {
+  color: #3a5a3a;
+  font-size: 10px;
+  letter-spacing: 1px;
+  min-width: 30px;
+}
+
+input, select { 
+  background: #050805; 
+  color: #4af74a; 
+  border: 1px solid #2a3a2a; 
+  padding: 4px 6px; 
+  font-family: inherit;
+  font-size: 11px;
+  width: 100%;
+}
+input:focus, select:focus { 
+  outline: none; 
+  border-color: #4af74a;
+  box-shadow: 0 0 8px #4af7433;
+}
+input[type="checkbox"] { 
+  width: 14px; 
+  height: 14px; 
+  accent-color: #4af74a; 
+}
+
+button {
+  background: transparent;
+  color: #4af74a;
+  border: 1px solid #2a3a2a;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+button:hover { 
+  background: #4af74a; 
+  color: #000;
+  box-shadow: 0 0 15px #4af74a;
+}
+button.btn-red { border-color: #4a4a; color: #aa4444; }
+button.btn-red:hover { background: #aa4444; color: #000; }
+
+.seq-grid {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.seq-step { 
+  width: 28px; 
+  height: 22px; 
+  background: #050805; 
+  border: 1px solid #2a3a2a; 
+  cursor: pointer; 
+  display: flex;
+  align-items: center; 
+  justify-content: center;
+  font-size: 9px;
+}
+.seq-step:hover { border-color: #4af74a; }
+.seq-step.active { 
+  background: #4af74a; 
+  color: #000;
+  box-shadow: 0 0 10px #4af74a;
+}
+.seq-step.playing { 
+  background: #2a4a2a; 
+  border-color: #4af74a;
+}
+
+.keyboard { display: flex; justify-content: center; gap: 2px; margin: 12px 0; flex-wrap: wrap; }
+.key { 
+  width: 38px; 
+  height: 65px; 
+  background: #080d08; 
+  border: 1px solid #2a3a2a;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 4px;
+  font-size: 10px;
+}
+.key.sharp {
+  width: 28px;
+  height: 40px;
+  position: relative;
+  z-index: 1;
+  margin-left: -14px;
+  margin-right: -14px;
+  background: #1a1a1a;
+  border-color: #4af74a;
+}
+.key:hover { border-color: #4af74a; }
+.key:active, .key.playing { 
+  background: #1a2a1a; 
+  box-shadow: 0 0 12px #4af7433, inset 0 0 10px #4af7422;
+}
+
+.preset-btn {
+  background: transparent;
+  color: #4af74a;
+  border: 1px solid #2a3a2a;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+.preset-btn:hover { 
+  background: #4af74a; 
+  color: #000;
+  box-shadow: 0 0 15px #4af74a;
+}
+
+.connection-line {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100;
+}

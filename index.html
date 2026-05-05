@@ -3,278 +3,40 @@
 <head>
   <meta charset="utf-8">
   <title>SID SYNTH</title>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
-    
-    * { box-sizing: border-box; }
-    body { 
-      font-family: 'Share Tech Mono', monospace; 
-      background: #0a0f0a; 
-      color: #4af74a; 
-      margin: 0; 
-      padding: 15px;
-      font-size: 14px;
-    }
-    
-    .container { max-width: 780px; margin: 0 auto; }
-    
-    .screen {
-      background: #000;
-      border: 2px solid #4af74a;
-      box-shadow: 0 0 30px #4af7430, inset 0 0 60px #000;
-      padding: 6px;
-      margin-bottom: 15px;
-    }
-    
-    canvas {
-      width: 100%;
-      height: 180px;
-      display: block;
-      border: 1px solid #1a2a1a;
-    }
-    
-    .note { 
-      text-align: center; 
-      color: #4af74a; 
-      font-size: 42px; 
-      height: 48px; 
-      text-shadow: 0 0 25px #4af74a, 0 0 50px #4af7433;
-      letter-spacing: 8px;
-    }
-    
-    .panel {
-      background: #0d120d;
-      border: 1px solid #2a3a2a;
-      padding: 10px;
-      margin-bottom: 10px;
-    }
-    
-    h2 {
-      color: #4af74a;
-      margin: 0 0 8px 0;
-      font-size: 12px;
-      letter-spacing: 3px;
-      text-transform: uppercase;
-      border-bottom: 1px solid #1a2a1a;
-      padding-bottom: 4px;
-    }
-    
-    .row { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; align-items: center; }
-    .row-center { justify-content: center; }
-    
-    input, select { 
-      background: #050805; 
-      color: #4af74a; 
-      border: 1px solid #2a3a2a; 
-      padding: 5px 8px; 
-      font-family: inherit;
-      font-size: 13px;
-    }
-    input:focus, select:focus { 
-      outline: none; 
-      border-color: #4af74a;
-      box-shadow: 0 0 8px #4af7433;
-    }
-    input[type="checkbox"] { 
-      width: 16px; 
-      height: 16px; 
-      accent-color: #4af74a; 
-    }
-    
-    .preset {
-      background: transparent;
-      color: #4af74a;
-      border: 1px solid #2a3a2a;
-      padding: 6px 14px;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 12px;
-      letter-spacing: 2px;
-    }
-    .preset:hover { 
-      background: #4af74a; 
-      color: #000;
-      box-shadow: 0 0 15px #4af74a;
-    }
-    
-    .btn {
-      background: transparent;
-      color: #4af74a;
-      border: 1px solid #2a3a2a;
-      padding: 8px 16px;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 12px;
-      letter-spacing: 2px;
-    }
-    .btn:hover { 
-      background: #4af74a; 
-      color: #000;
-      box-shadow: 0 0 12px #4af74a;
-    }
-    .btn-red { border-color: #4a4a; color: #aa4444; }
-    .btn-red:hover { background: #aa4444; color: #000; }
-    
-    .osc-section {
-      display: flex;
-      gap: 8px;
-    }
-    .osc-unit {
-      flex: 1;
-      background: #050805;
-      border: 1px solid #1a2a1a;
-      padding: 6px;
-      text-align: center;
-    }
-    .osc-unit h3 {
-      color: #4af74a;
-      font-size: 10px;
-      margin: 0 0 4px 0;
-      letter-spacing: 2px;
-    }
-    .osc-unit input, .osc-unit select {
-      width: 100%;
-      margin-bottom: 3px;
-      font-size: 11px;
-    }
-    .osc-unit.active {
-      border-color: #4af74a;
-      box-shadow: 0 0 8px #4af7433;
-    }
-    
-    .seq-step { 
-      width: 30px; 
-      height: 24px; 
-      background: #050805; 
-      border: 1px solid #2a3a2a; 
-      cursor: pointer; 
-      display: flex;
-      align-items: center; 
-      justify-content: center;
-      font-size: 10px;
-    }
-    .seq-step:hover { border-color: #4af74a; }
-    .seq-step.active { 
-      background: #4af74a; 
-      color: #000;
-      box-shadow: 0 0 10px #4af74a;
-    }
-    .seq-step.playing { 
-      background: #2a4a2a; 
-      border-color: #4af74a;
-    }
-    .seq-grid { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; }
-    
-    .keyboard { display: flex; justify-content: center; gap: 2px; margin: 12px 0; }
-    .key { 
-      width: 38px; 
-      height: 65px; 
-      background: #080d08; 
-      border: 1px solid #2a3a2a;
-      cursor: pointer;
-    }
-    .key:hover { border-color: #4af74a; }
-    .key:active, .key.playing { 
-      background: #1a2a1a; 
-      box-shadow: 0 0 12px #4af7433, inset 0 0 10px #4af7422;
-    }
-    
-    .big-btn { 
-      width: 100%; 
-      padding: 14px; 
-      font-size: 14px;
-      letter-spacing: 4px;
-    }
-    
-    label { color: #3a5a3a; font-size: 11px; letter-spacing: 1px; }
-    
-    select option { background: #050805; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="container">
-    <div style="text-align:center;font-size:24px;color:#4af74a;margin-bottom:12px;letter-spacing:8px;text-shadow:0 0 20px #4af74a">SID SYNTH</div>
+    <div class="header">SID SYNTH</div>
     
     <div class="screen">
       <canvas id="oscilloscope"></canvas>
       <canvas id="spectroscope" style="width:100%;height:120px;border:1px solid #1a2a1a;display:block;margin-top:2px;"></canvas>
-      <div class="note" id="noteDisplay">_</div>
+      <div class="note-display" id="noteDisplay">_</div>
+    </div>
+
+    <div class="rack" id="rack">
+      <!-- Компоненты будут добавляться динамически -->
     </div>
 
     <div class="panel">
       <div class="row row-center">
-        <button class="preset" data-preset="bass">BASS</button>
-        <button class="preset" data-preset="lead">LEAD</button>
-        <button class="preset" data-preset="pad">PAD</button>
-        <button class="preset" data-preset="drum">DRUM</button>
+        <button class="preset-btn" data-preset="bass">BASS</button>
+        <button class="preset-btn" data-preset="lead">LEAD</button>
+        <button class="preset-btn" data-preset="pad">PAD</button>
+        <button class="preset-btn" data-preset="drum">DRUM</button>
       </div>
       <div class="row row-center" style="margin-top:6px">
-        <button class="btn" id="savePreset">SAVE</button>
-        <button class="btn" id="loadPreset">LOAD</button>
-        <button class="btn" id="deletePreset">DEL</button>
+        <button class="preset-btn" id="savePreset">SAVE</button>
+        <button class="preset-btn" id="loadPreset">LOAD</button>
+        <button class="preset-btn" id="deletePreset">DEL</button>
         <select id="presetList" style="width:100px"></select>
       </div>
     </div>
 
     <div class="panel">
-      <h2>OSCILLATORS</h2>
-      <div class="osc-section">
-        <div class="osc-unit" id="osc1">
-          <h3>OSC 1</h3>
-          <input type="checkbox" id="osc1On" checked>
-          <select id="waveform1">
-            <option value="sawtooth" selected>SAW</option>
-            <option value="square">PULSE</option>
-            <option value="triangle">TRI</option>
-            <option value="noise">NOISE</option>
-          </select>
-          <input type="number" id="freq1" value="440" placeholder="Hz">
-        </div>
-        <div class="osc-unit" id="osc2">
-          <h3>OSC 2</h3>
-          <input type="checkbox" id="osc2On">
-          <select id="waveform2">
-            <option value="sawtooth" selected>SAW</option>
-            <option value="square">PULSE</option>
-            <option value="triangle">TRI</option>
-          </select>
-          <input type="number" id="freq2" value="880" placeholder="Hz">
-        </div>
-        <div class="osc-unit" id="osc3">
-          <h3>OSC 3</h3>
-          <input type="checkbox" id="osc3On">
-          <select id="waveform3">
-            <option value="sawtooth" selected>SAW</option>
-            <option value="square">PULSE</option>
-            <option value="triangle">TRI</option>
-          </select>
-          <input type="number" id="freq3" value="1320" placeholder="Hz">
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>FILTER + ADSR</h2>
-      <div class="row">
-        <select id="filterType" style="width:70px">
-          <option value="lowpass">LP</option>
-          <option value="highpass">HP</option>
-          <option value="bandpass">BP</option>
-        </select>
-        <input type="number" id="filterFreq" value="2000" placeholder="CUT" style="width:65px">
-        <input type="number" id="filterRes" value="1" placeholder="RES" style="width:50px">
-      </div>
-      <div class="row">
-        <input type="number" id="attack" value="0.01" step="0.01" placeholder="A" style="width:50px">
-        <input type="number" id="decay" value="0.1" step="0.01" placeholder="D" style="width:50px">
-        <input type="number" id="sustain" value="0.8" step="0.01" placeholder="S" style="width:50px">
-        <input type="number" id="release" value="0.2" step="0.01" placeholder="R" style="width:50px">
-      </div>
-    </div>
-
-    <div class="panel">
       <h2>ARPEGGIATOR</h2>
-      <div class="row">
+      <div class="param-row">
         <label><input type="checkbox" id="arpOn"> ON</label>
         <input type="number" id="arpSpeed" value="100" placeholder="ms" style="width:55px">
         <select id="arpPattern" style="width:65px">
@@ -285,69 +47,14 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h2>LFO</h2>
-      <div class="row">
-        <label><input type="checkbox" id="lfoOn"> ON</label>
-        <select id="lfoType" style="width:65px">
-          <option value="sine">SINE</option>
-          <option value="square">SQR</option>
-          <option value="sawtooth">SAW</option>
-          <option value="triangle">TRI</option>
-        </select>
-        <input type="number" id="lfoRate" value="1" step="0.1" placeholder="Hz" style="width:50px">
-        <input type="number" id="lfoDepth" value="50" step="1" placeholder="DEP" style="width:50px">
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>MODULATION</h2>
-      <div class="row">
-        <label><input type="checkbox" id="pwmOn"> PWM</label>
-        <input type="number" id="pwmRate" value="1" step="0.1" placeholder="Hz" style="width:50px">
-        <input type="number" id="pwmDepth" value="0.5" step="0.1" placeholder="DEP" style="width:50px">
-      </div>
-      <div class="row" style="margin-top:6px">
-        <label><input type="checkbox" id="ringModOn"> RING MOD</label>
-        <label><input type="checkbox" id="hardSyncOn"> HARD SYNC</label>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>EFFECTS</h2>
-      <div class="row">
-        <label><input type="checkbox" id="delayOn"> DELAY</label>
-        <input type="number" id="delayTime" value="0.3" step="0.1" placeholder="TIME" style="width:55px">
-        <input type="number" id="delayFeedback" value="0.4" step="0.1" placeholder="FB" style="width:45px">
-      </div>
-      <div class="row" style="margin-top:6px">
-        <label><input type="checkbox" id="reverbOn"> REVERB</label>
-        <input type="number" id="reverbDuration" value="2" step="0.1" placeholder="TIME" style="width:55px">
-        <input type="number" id="reverbDecay" value="0.5" step="0.1" placeholder="DEC" style="width:45px">
-      </div>
-    </div>
-
-    <div class="panel">
-      <h2>SEQUENCER</h2>
-      <div class="row">
-        <button class="btn" id="seqPlay">PLAY</button>
-        <button class="btn btn-red" id="seqStop">STOP</button>
-        <input type="number" id="seqBPM" value="120" placeholder="BPM" style="width:55px">
-      </div>
-      <div class="row" style="margin-top:6px">
-        <button class="btn" id="exportSeq">EXPORT</button>
-        <button class="btn" id="importSeq">IMPORT</button>
-        <input type="file" id="seqFile" accept=".json" style="display:none">
-      </div>
-      <div class="seq-grid" id="seqGrid"></div>
-    </div>
-
-    <div class="keyboard" id="keyboard" style="flex-wrap:wrap;gap:2px;max-width:600px;margin:12px auto;"></div>
+    <div class="keyboard" id="keyboard"></div>
+    
     <div class="row row-center" style="margin-top:10px">
-      <button class="btn" id="midiConnect">MIDI CONNECT</button>
+      <button class="preset-btn" id="midiConnect">MIDI CONNECT</button>
       <span id="midiStatus" style="color:#3a5a3a;font-size:11px;letter-spacing:1px;"></span>
     </div>
-    <button class="btn big-btn" id="play">PLAY NOTE</button>
+    
+    <button class="preset-btn" style="width:100%;padding:14px;font-size:14px;letter-spacing:4px;margin-top:10px;" id="play">PLAY NOTE</button>
   </div>
   <script type="module" src="src/main.js"></script>
 </body>
