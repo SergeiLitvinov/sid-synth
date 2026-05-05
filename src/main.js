@@ -226,6 +226,103 @@ const NOTE_NAMES = Object.keys(NOTES);
   }
   document.querySelectorAll('.preset').forEach(b => b.onclick = () => loadPreset(b.dataset.preset));
 
+  function getCurrentSettings() {
+    return {
+      osc1On: document.getElementById('osc1On')?.checked,
+      osc2On: document.getElementById('osc2On')?.checked,
+      osc3On: document.getElementById('osc3On')?.checked,
+      wave1: document.getElementById('waveform1')?.value,
+      wave2: document.getElementById('waveform2')?.value,
+      wave3: document.getElementById('waveform3')?.value,
+      freq1: document.getElementById('freq1')?.value,
+      freq2: document.getElementById('freq2')?.value,
+      freq3: document.getElementById('freq3')?.value,
+      filterType: document.getElementById('filterType')?.value,
+      filterFreq: document.getElementById('filterFreq')?.value,
+      filterRes: document.getElementById('filterRes')?.value,
+      attack: document.getElementById('attack')?.value,
+      decay: document.getElementById('decay')?.value,
+      sustain: document.getElementById('sustain')?.value,
+      release: document.getElementById('release')?.value,
+      lfoOn: document.getElementById('lfoOn')?.checked,
+      lfoType: document.getElementById('lfoType')?.value,
+      lfoRate: document.getElementById('lfoRate')?.value,
+      lfoDepth: document.getElementById('lfoDepth')?.value,
+      pwmOn: document.getElementById('pwmOn')?.checked,
+      pwmRate: document.getElementById('pwmRate')?.value,
+      pwmDepth: document.getElementById('pwmDepth')?.value,
+      ringModOn: document.getElementById('ringModOn')?.checked,
+      hardSyncOn: document.getElementById('hardSyncOn')?.checked
+    };
+  }
+
+  function applySettings(s) {
+    if (s.osc1On !== undefined) document.getElementById('osc1On').checked = s.osc1On;
+    if (s.osc2On !== undefined) document.getElementById('osc2On').checked = s.osc2On;
+    if (s.osc3On !== undefined) document.getElementById('osc3On').checked = s.osc3On;
+    if (s.wave1) document.getElementById('waveform1').value = s.wave1;
+    if (s.wave2) document.getElementById('waveform2').value = s.wave2;
+    if (s.wave3) document.getElementById('waveform3').value = s.wave3;
+    if (s.freq1) document.getElementById('freq1').value = s.freq1;
+    if (s.freq2) document.getElementById('freq2').value = s.freq2;
+    if (s.freq3) document.getElementById('freq3').value = s.freq3;
+    if (s.filterType) document.getElementById('filterType').value = s.filterType;
+    if (s.filterFreq) document.getElementById('filterFreq').value = s.filterFreq;
+    if (s.filterRes) document.getElementById('filterRes').value = s.filterRes;
+    if (s.attack) document.getElementById('attack').value = s.attack;
+    if (s.decay) document.getElementById('decay').value = s.decay;
+    if (s.sustain) document.getElementById('sustain').value = s.sustain;
+    if (s.release) document.getElementById('release').value = s.release;
+    if (s.lfoOn !== undefined) document.getElementById('lfoOn').checked = s.lfoOn;
+    if (s.lfoType) document.getElementById('lfoType').value = s.lfoType;
+    if (s.lfoRate) document.getElementById('lfoRate').value = s.lfoRate;
+    if (s.lfoDepth) document.getElementById('lfoDepth').value = s.lfoDepth;
+    if (s.pwmOn !== undefined) document.getElementById('pwmOn').checked = s.pwmOn;
+    if (s.pwmRate) document.getElementById('pwmRate').value = s.pwmRate;
+    if (s.pwmDepth) document.getElementById('pwmDepth').value = s.pwmDepth;
+    if (s.ringModOn !== undefined) document.getElementById('ringModOn').checked = s.ringModOn;
+    if (s.hardSyncOn !== undefined) document.getElementById('hardSyncOn').checked = s.hardSyncOn;
+  }
+
+  function updatePresetList() {
+    const sel = document.getElementById('presetList');
+    sel.innerHTML = '';
+    const presets = JSON.parse(localStorage.getItem('sidPresets') || '{}');
+    Object.keys(presets).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    });
+  }
+  updatePresetList();
+
+  document.getElementById('savePreset').onclick = () => {
+    const name = prompt('Preset name:');
+    if (!name) return;
+    const presets = JSON.parse(localStorage.getItem('sidPresets') || '{}');
+    presets[name] = getCurrentSettings();
+    localStorage.setItem('sidPresets', JSON.stringify(presets));
+    updatePresetList();
+    document.getElementById('presetList').value = name;
+  };
+
+  document.getElementById('loadPreset').onclick = () => {
+    const name = document.getElementById('presetList').value;
+    if (!name) return;
+    const presets = JSON.parse(localStorage.getItem('sidPresets') || '{}');
+    if (presets[name]) applySettings(presets[name]);
+  };
+
+  document.getElementById('deletePreset').onclick = () => {
+    const name = document.getElementById('presetList').value;
+    if (!name) return;
+    const presets = JSON.parse(localStorage.getItem('sidPresets') || '{}');
+    delete presets[name];
+    localStorage.setItem('sidPresets', JSON.stringify(presets));
+    updatePresetList();
+  };
+
   const kb = document.getElementById('keyboard');
   NOTE_NAMES.forEach(n => {
     const k = document.createElement('div');
