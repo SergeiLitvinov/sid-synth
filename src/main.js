@@ -71,8 +71,8 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     const type = e.dataTransfer.getData('type');
     const id = e.dataTransfer.getData('id');
     const rect = rack.getBoundingClientRect();
-    const x = e.clientX - rect.left - 100;
-    const y = e.clientY - rect.top - 20;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     createComponent(type, id, x, y);
   });
 
@@ -111,22 +111,21 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     
     components[newId] = comp;
     rack.appendChild(comp.element);
-    comp.element.style.left = Math.max(0, x) + 'px';
-    comp.element.style.top = Math.max(0, y) + 'px';
+    comp.element.style.left = Math.max(0, x - 100) + 'px';
+    comp.element.style.top = Math.max(0, y - 30) + 'px';
     makeDraggable(comp.element);
     labelConnections();
   }
 
   function makeDraggable(el) {
     let isDragging = false;
-    let offsetX = 0, offsetY = 0;
+    let startX = 0, startY = 0;
 
     el.addEventListener('mousedown', e => {
       if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg')) return;
       isDragging = true;
-      const rect = el.getBoundingClientRect();
-      offsetX = e.clientX - rect.left;
-      offsetY = e.clientY - rect.top;
+      startX = e.clientX - el.offsetLeft;
+      startY = e.clientY - el.offsetTop;
       el.style.zIndex = 1000;
       e.preventDefault();
     });
@@ -134,8 +133,8 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     document.addEventListener('mousemove', e => {
       if (!isDragging) return;
       const rackRect = rack.getBoundingClientRect();
-      let x = e.clientX - rackRect.left - offsetX;
-      let y = e.clientY - rackRect.top - offsetY;
+      let x = e.clientX - rackRect.left - startX;
+      let y = e.clientY - rackRect.top - startY;
       x = Math.max(0, Math.min(x, rackRect.width - el.offsetWidth));
       y = Math.max(0, Math.min(y, rackRect.height - el.offsetHeight));
       el.style.left = x + 'px';
@@ -154,7 +153,6 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   function labelConnections() {
     while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
     
-    // Draw connections between components
     Object.keys(components).forEach(fromId => {
       const fromComp = components[fromId];
       if (!fromComp || !fromComp.element) return;
@@ -180,8 +178,8 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
         const y2 = r2.top - rackRect.top + r2.height/2;
         
         // Draw smooth curve
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         const cx = (x1 + x2) / 2;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
         path.setAttribute('d', d);
         path.setAttribute('fill', 'none');
@@ -295,7 +293,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     let barX = 0;
     for (let i = 0; i < freqData.length; i++) {
       const barHeight = (freqData[i] / 255.0) * sh;
-      specCvs.fillStyle = `hsl(${(i / freqData.length) * 120 + 80}, 70%, 50%)`;
+      specCvs.fillStyle = `hsl(${((i / freqData.length) * 120 + 80)}, 70%, 50%)`;
       specCvs.fillRect(barX, sh - barHeight, barWidth, barHeight);
       barX += barWidth + 1;
     }

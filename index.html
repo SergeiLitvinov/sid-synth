@@ -16,7 +16,15 @@
       <div class="note-display" id="noteDisplay">_</div>
     </div>
 
-  <div class="workspace">
+    <div class="screen">
+      <canvas id="oscilloscope"></canvas>
+      <canvas id="spectroscope" style="width:100%;height:120px;border:1px solid #1a2a1a;display:block;margin-top:2px;"></canvas>
+      <div class="note-display" id="noteDisplay">_</div>
+    </div>
+
+    <div class="keyboard" id="keyboard"></div>
+
+    <div class="workspace">
       <div class="tool-bar" id="tool-bar">
         <div class="tool-bar-title">COMPONENTS</div>
         <div class="tool-item" data-type="oscillator" data-id="osc1">OSC 1</div>
@@ -34,8 +42,6 @@
         <svg class="connection-line" id="connectionsSvg"></svg>
       </div>
     </div>
-
-    <div class="keyboard" id="keyboard"></div>
 
     <div class="panel">
       <div class="row row-center">
