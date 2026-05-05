@@ -1,9 +1,4 @@
-import { OscillatorComponent } from './components/index.js';
-import { FilterComponent } from './components/index.js';
-import { AdsrComponent } from './components/index.js';
-import { LfoComponent } from './components/index.js';
-import { EffectsComponent } from './components/index.js';
-import { PatternSequencer } from './sequencer/pattern.js';
+import { OscillatorComponent, FilterComponent, AdsrComponent, LfoComponent, EffectsComponent, MixerComponent, SplitterComponent, SequencerComponent } from './components/index.js';
 
 console.log('SID Synth Modular loaded');
 
@@ -51,7 +46,10 @@ const NOTE_NAMES = Object.keys(NOTES);
     { id: 'filter', x: 10, y: 150 },
     { id: 'adsr', x: 220, y: 150 },
     { id: 'lfo', x: 430, y: 150 },
-    { id: 'effects', x: 10, y: 290 }
+    { id: 'effects', x: 10, y: 290 },
+    { id: 'mixer', x: 220, y: 290 },
+    { id: 'splitter', x: 430, y: 290 },
+    { id: 'sequencer', x: 640, y: 10 }
   ];
 
   const compList = [
@@ -61,7 +59,10 @@ const NOTE_NAMES = Object.keys(NOTES);
     { id: 'filter', comp: new FilterComponent(ctx) },
     { id: 'adsr', comp: new AdsrComponent(ctx) },
     { id: 'lfo', comp: new LfoComponent(ctx) },
-    { id: 'effects', comp: new EffectsComponent(ctx) }
+    { id: 'effects', comp: new EffectsComponent(ctx) },
+    { id: 'mixer', comp: new MixerComponent(ctx) },
+    { id: 'splitter', comp: new SplitterComponent(ctx) },
+    { id: 'sequencer', comp: new SequencerComponent(ctx) }
   ];
 
   compList.forEach(({ id, comp }) => {
@@ -74,13 +75,19 @@ const NOTE_NAMES = Object.keys(NOTES);
     }
   });
 
+  // Default connection: osc1 -> filter -> adsr -> effects -> master
+  components.osc1.connect(components.filter);
+  components.filter.connect(components.adsr);
+  components.adsr.connect(components.effects);
+  components.effects.connect({ node: masterGain });
+
   // Drag functionality
   let draggedComp = null;
   let offsetX = 0, offsetY = 0;
 
   document.querySelectorAll('.component').forEach(el => {
     el.onmousedown = (e) => {
-      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.tagName === 'SVG') return;
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.tagName === 'svg') return;
       draggedComp = el;
       const rect = el.getBoundingClientRect();
       offsetX = e.clientX - rect.left;
@@ -109,12 +116,6 @@ const NOTE_NAMES = Object.keys(NOTES);
     }
   };
 
-  // Default connection: osc1 -> filter -> adsr -> effects -> master
-  osc1.connect(filter);
-  filter.connect(adsr);
-  adsr.connect(effects);
-  effects.connect({ node: masterGain });
-
   // Connection UI
   let connectionMode = false;
   let connectionFrom = null;
@@ -137,7 +138,7 @@ const NOTE_NAMES = Object.keys(NOTES);
         svgEl.appendChild(circle);
       }
     });
-    // Draw connections between components (simplified - just show output to input)
+    // Draw connections between components (hardcoded for now)
     const connectedPairs = [
       ['osc1', 'filter'],
       ['filter', 'adsr'],
@@ -210,15 +211,15 @@ const NOTE_NAMES = Object.keys(NOTES);
 
   function playNote(note) {
     if (ctx.state === 'suspended') ctx.resume();
-    osc1.frequency = NOTES[note] || 440;
-    osc1.update();
-    adsr.triggerAttack();
+    components.osc1.frequency = NOTES[note] || 440;
+    components.osc1.update();
+    components.adsr.triggerAttack();
     document.getElementById('noteDisplay').textContent = note;
     isPlaying = true;
   }
 
   function stopAll() {
-    adsr.triggerRelease();
+    components.adsr.triggerRelease();
     document.getElementById('noteDisplay').textContent = '_';
     isPlaying = false;
   }
@@ -237,23 +238,23 @@ const NOTE_NAMES = Object.keys(NOTES);
         const p = PRESETS[b.dataset.preset];
         if (!p) return;
         if (p.osc1) {
-          osc1.isOn = p.osc1.on;
-          osc1.waveform = p.osc1.wave;
-          osc1.frequency = p.osc1.freq;
-          osc1.update();
+          components.osc1.isOn = p.osc1.on;
+          components.osc1.waveform = p.osc1.wave;
+          components.osc1.frequency = p.osc1.freq;
+          components.osc1.update();
         }
         if (p.filter) {
-          filter.filterType = p.filter.type;
-          filter.frequency = p.filter.freq;
-          filter.Q = p.filter.q;
-          filter.update();
+          components.filter.filterType = p.filter.type;
+          components.filter.frequency = p.filter.freq;
+          components.filter.Q = p.filter.q;
+          components.filter.update();
         }
         if (p.adsr) {
-          adsr.attack = p.adsr.a;
-          adsr.decay = p.adsr.d;
-          adsr.sustain = p.adsr.s;
-          adsr.release = p.adsr.r;
-          adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
+          components.adsr.attack = p.adsr.a;
+          components.adsr.decay = p.adsr.d;
+          components.adsr.sustain = p.adsr.s;
+          components.adsr.release = p.adsr.r;
+          components.adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
         }
       };
     }
@@ -263,13 +264,13 @@ const NOTE_NAMES = Object.keys(NOTES);
   document.getElementById('savePatch').onclick = () => {
     const patch = {
       components: {
-        osc1: { isOn: osc1.isOn, waveform: osc1.waveform, frequency: osc1.frequency },
-        osc2: { isOn: osc2.isOn, waveform: osc2.waveform, frequency: osc2.frequency },
-        osc3: { isOn: osc3.isOn, waveform: osc3.waveform, frequency: osc3.frequency },
-        filter: { filterType: filter.filterType, frequency: filter.frequency, Q: filter.Q },
-        adsr: { attack: adsr.attack, decay: adsr.decay, sustain: adsr.sustain, release: adsr.release },
-        lfo: { rate: lfo.rate, depth: lfo.depth, waveType: lfo.waveType },
-        effects: { delayOn: effects.delayOn, reverbOn: effects.reverbOn, delayTime: effects.delayTime, reverbDuration: effects.reverbDuration }
+        osc1: { isOn: components.osc1.isOn, waveform: components.osc1.waveform, frequency: components.osc1.frequency },
+        osc2: { isOn: components.osc2.isOn, waveform: components.osc2.waveform, frequency: components.osc2.frequency },
+        osc3: { isOn: components.osc3.isOn, waveform: components.osc3.waveform, frequency: components.osc3.frequency },
+        filter: { filterType: components.filter.filterType, frequency: components.filter.frequency, Q: components.filter.Q },
+        adsr: { attack: components.adsr.attack, decay: components.adsr.decay, sustain: components.adsr.sustain, release: components.adsr.release },
+        lfo: { rate: components.lfo.rate, depth: components.lfo.depth, waveType: components.lfo.waveType },
+        effects: { delayOn: components.effects.delayOn, reverbOn: components.effects.reverbOn, delayTime: components.effects.delayTime, reverbDuration: components.effects.reverbDuration }
       },
       connections: [
         { from: 'osc1', to: 'filter' },
@@ -298,19 +299,18 @@ const NOTE_NAMES = Object.keys(NOTES);
     reader.onload = (ev) => {
       try {
         const patch = JSON.parse(ev.target.result);
-        // Restore components
         if (patch.components.osc1) {
-          osc1.isOn = patch.components.osc1.isOn;
-          osc1.waveform = patch.components.osc1.waveform;
-          osc1.frequency = patch.components.osc1.frequency;
-          osc1.update();
+          components.osc1.isOn = patch.components.osc1.isOn;
+          components.osc1.waveform = patch.components.osc1.waveform;
+          components.osc1.frequency = patch.components.osc1.frequency;
+          components.osc1.update();
         }
         // ... similar for other components
       } catch(err) { console.error('Patch load error:', err); }
     };
     reader.readAsText(file);
     e.target.value = '';
-  };
+  },
 
   // Visualization
   function draw() {

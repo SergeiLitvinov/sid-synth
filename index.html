@@ -22,12 +22,19 @@
     </div>
 
     <div class="panel">
-      <div class="row row-center">
-        <button class="preset-btn" data-preset="bass">BASS</button>
-        <button class="preset-btn" data-preset="lead">LEAD</button>
-        <button class="preset-btn" data-preset="pad">PAD</button>
-        <button class="preset-btn" data-preset="drum">DRUM</button>
+      <h2>ARPEGGIATOR</h2>
+      <div class="param-row">
+        <label><input type="checkbox" id="arpOn"> ON</label>
+        <input type="number" id="arpSpeed" value="100" placeholder="ms" style="width:55px">
+        <select id="arpPattern" style="width:65px">
+          <option value="up">UP</option>
+          <option value="down">DOWN</option>
+          <option value="random">RAND</option>
+        </select>
       </div>
+    </div>
+
+    <!-- Old sequencer controls removed, now in component -->
       <div class="row row-center" style="margin-top:6px">
         <button class="preset-btn" id="savePreset">SAVE</button>
         <button class="preset-btn" id="loadPreset">LOAD</button>
@@ -41,17 +48,7 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h2>ARPEGGIATOR</h2>
-      <div class="param-row">
-        <label><input type="checkbox" id="arpOn"> ON</label>
-        <input type="number" id="arpSpeed" value="100" placeholder="ms" style="width:55px">
-        <select id="arpPattern" style="width:65px">
-          <option value="up">UP</option>
-          <option value="down">DOWN</option>
-          <option value="random">RAND</option>
-        </select>
-      </div>
+    <!-- Sequencer moved to component -->
     </div>
 
     <div class="keyboard" id="keyboard"></div>
