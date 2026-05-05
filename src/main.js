@@ -1,7 +1,6 @@
 import { OscillatorComponent } from './components/OscillatorComponent.js';
 import { FilterComponent } from './components/FilterComponent.js';
 import { AdsrComponent } from './components/AdsrComponent.js';
-import { LfoComponent } from './components/LfoComponent.js';
 import { EffectsComponent } from './components/EffectsComponent.js';
 
 console.log('SID Synth Modular loaded');
@@ -14,6 +13,7 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   masterGain.gain.value = 0.7;
   masterGain.connect(ctx.destination);
 
+  // Visualization setup
   const canvas = document.getElementById('oscilloscope');
   const cvs = canvas.getContext('2d');
   canvas.width = window.innerWidth > 800 ? 750 : window.innerWidth - 40;
@@ -23,11 +23,6 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   const specCvs = specCanvas.getContext('2d');
   specCanvas.width = canvas.width;
   specCanvas.height = 120;
-
-  window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth > 800 ? 750 : window.innerWidth - 40;
-    specCanvas.width = canvas.width;
-  });
 
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 4096;
@@ -53,12 +48,17 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   components.effects = new EffectsComponent(ctx);
   rack.appendChild(components.effects.element);
 
-  // Default connection: osc1 -> filter -> adsr -> effects -> master
-  components.osc1.connect(components.filter);
-  components.filter.connectInput(components.osc1);
-  components.adsr.connectInput(components.filter);
-  components.effects.connectInput(components.adsr);
-  components.effects.connect({ node: masterGain });
+  // Connect audio chain: osc1 -> filter -> adsr -> effects -> master
+  // Osc1 output to Filter input
+  components.osc1.outputGain.connect(components.filter.inputGain);
+  // Filter output to ADSR input
+  components.filter.node.connect(components.adsr.inputGain);
+  // ADSR output to Effects input
+  components.adsr.node.connect(components.effects.inputGain);
+  // Effects output to master
+  components.effects.node.connect(masterGain);
+
+  console.log('Audio chain connected');
 
   // Keyboard
   const kb = document.getElementById('keyboard');
@@ -79,7 +79,6 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
 
   function playNote(note) {
     if (ctx.state === 'suspended') ctx.resume();
-    if (!components.lfo.lfo) components.lfo.startLfo();
     components.osc1.frequency = NOTES[note] || 440;
     components.osc1.update();
     components.adsr.triggerAttack();
@@ -93,12 +92,12 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     isPlaying = false;
   }
 
-  document.getElementById('play').onclick = () => { 
-    if (ctx.state === 'suspended') ctx.resume(); 
-    playNote('C'); 
+  document.getElementById('play').onclick = () => {
+    if (ctx.state === 'suspended') ctx.resume();
+    playNote('C');
   };
 
-  // Visualization
+  // Visualization loop
   function draw() {
     requestAnimationFrame(draw);
     const data = new Uint8Array(analyser.frequencyBinCount);
