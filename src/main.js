@@ -1,10 +1,13 @@
-import { OscillatorComponent, FilterComponent, AdsrComponent, LfoComponent, EffectsComponent, MixerComponent, SplitterComponent, SequencerComponent } from './components/index.js';
+import { OscillatorComponent } from './components/OscillatorComponent.js';
+import { FilterComponent } from './components/FilterComponent.js';
+import { AdsrComponent } from './components/AdsrComponent.js';
+import { LfoComponent } from './components/LfoComponent.js';
+import { EffectsComponent } from './components/EffectsComponent.js';
 
 console.log('SID Synth Modular loaded');
 
 const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.63, 'F': 349.23, 'F#': 369.99, 'G': 392.00, 'G#': 415.30, 'A': 440.00, 'A#': 466.16, 'B': 493.88 };
 const KEY_MAP = { 'a': 'C', 'w': 'C#', 's': 'D', 'e': 'D#', 'd': 'E', 'f': 'F', 't': 'F#', 'g': 'G', 'y': 'G#', 'h': 'A', 'u': 'A#', 'j': 'B' };
-const NOTE_NAMES = Object.keys(NOTES);
 
 (async () => {
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -38,163 +41,34 @@ const NOTE_NAMES = Object.keys(NOTES);
   const rack = document.getElementById('rack');
   const components = {};
 
-  // Create components with initial positions
-  const positions = [
-    { id: 'osc1', x: 10, y: 10 },
-    { id: 'osc2', x: 220, y: 10 },
-    { id: 'osc3', x: 430, y: 10 },
-    { id: 'filter', x: 10, y: 150 },
-    { id: 'adsr', x: 220, y: 150 },
-    { id: 'lfo', x: 430, y: 150 },
-    { id: 'effects', x: 10, y: 290 },
-    { id: 'mixer', x: 220, y: 290 },
-    { id: 'splitter', x: 430, y: 290 },
-    { id: 'sequencer', x: 640, y: 10 }
-  ];
+  // Create components
+  components.osc1 = new OscillatorComponent(ctx, 1);
+  rack.appendChild(components.osc1.element);
 
-  const compList = [
-    { id: 'osc1', comp: new OscillatorComponent(ctx, 1) },
-    { id: 'osc2', comp: new OscillatorComponent(ctx, 2) },
-    { id: 'osc3', comp: new OscillatorComponent(ctx, 3) },
-    { id: 'filter', comp: new FilterComponent(ctx) },
-    { id: 'adsr', comp: new AdsrComponent(ctx) },
-    { id: 'lfo', comp: new LfoComponent(ctx) },
-    { id: 'effects', comp: new EffectsComponent(ctx) },
-    { id: 'mixer', comp: new MixerComponent(ctx) },
-    { id: 'splitter', comp: new SplitterComponent(ctx) },
-    { id: 'sequencer', comp: new SequencerComponent(ctx) }
-  ];
+  components.osc2 = new OscillatorComponent(ctx, 2);
+  rack.appendChild(components.osc2.element);
 
-  compList.forEach(({ id, comp }) => {
-    components[id] = comp;
-    rack.appendChild(comp.element);
-    const pos = positions.find(p => p.id === id);
-    if (pos) {
-      comp.element.style.left = pos.x + 'px';
-      comp.element.style.top = pos.y + 'px';
-    }
-  });
+  components.filter = new FilterComponent(ctx);
+  rack.appendChild(components.filter.element);
 
-  // Default connection: osc1 -> filter -> adsr -> effects -> master
+  components.adsr = new AdsrComponent(ctx);
+  rack.appendChild(components.adsr.element);
+
+  components.lfo = new LfoComponent(ctx);
+  rack.appendChild(components.lfo.element);
+
+  components.effects = new EffectsComponent(ctx);
+  rack.appendChild(components.effects.element);
+
+  // Default connection
   components.osc1.connect(components.filter);
   components.filter.connect(components.adsr);
   components.adsr.connect(components.effects);
   components.effects.connect({ node: masterGain });
 
-  // Drag functionality
-  let draggedComp = null;
-  let offsetX = 0, offsetY = 0;
-
-  document.querySelectorAll('.component').forEach(el => {
-    el.onmousedown = (e) => {
-      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.tagName === 'svg') return;
-      draggedComp = el;
-      const rect = el.getBoundingClientRect();
-      offsetX = e.clientX - rect.left;
-      offsetY = e.clientY - rect.top;
-      el.style.zIndex = 1000;
-      e.preventDefault();
-    };
-  });
-
-  document.onmousemove = (e) => {
-    if (!draggedComp) return;
-    const rackRect = rack.getBoundingClientRect();
-    let x = e.clientX - rackRect.left - offsetX;
-    let y = e.clientY - rackRect.top - offsetY;
-    x = Math.max(0, Math.min(x, rackRect.width - draggedComp.offsetWidth));
-    y = Math.max(0, Math.min(y, rackRect.height - draggedComp.offsetHeight));
-    draggedComp.style.left = x + 'px';
-    draggedComp.style.top = y + 'px';
-    drawConnections();
-  };
-
-  document.onmouseup = () => {
-    if (draggedComp) {
-      draggedComp.style.zIndex = '';
-      draggedComp = null;
-    }
-  };
-
-  // Connection UI
-  let connectionMode = false;
-  let connectionFrom = null;
-  const svgEl = document.getElementById('connectionsSvg');
-
-  function drawConnections() {
-    while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
-    // Draw active connection point
-    document.querySelectorAll('.conn-point').forEach(pt => {
-      if (pt.classList.contains('active')) {
-        const rect = pt.getBoundingClientRect();
-        const rackRect = rack.getBoundingClientRect();
-        const x = rect.left - rackRect.left + rect.width/2;
-        const y = rect.top - rackRect.top + rect.height/2;
-        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', x);
-        circle.setAttribute('cy', y);
-        circle.setAttribute('r', 4);
-        circle.setAttribute('fill', '#4af74a');
-        svgEl.appendChild(circle);
-      }
-    });
-    // Draw connections between components (hardcoded for now)
-    const connectedPairs = [
-      ['osc1', 'filter'],
-      ['filter', 'adsr'],
-      ['adsr', 'effects'],
-      ['effects', 'master']
-    ];
-    connectedPairs.forEach(([fromId, toId]) => {
-      const fromEl = document.querySelector(`[data-id="${fromId}"].conn-output`);
-      const toEl = document.querySelector(`[data-id="${toId}"].conn-input`);
-      if (fromEl && toEl) {
-        const r1 = fromEl.getBoundingClientRect();
-        const r2 = toEl.getBoundingClientRect();
-        const rackRect = rack.getBoundingClientRect();
-        const x1 = r1.left - rackRect.left + r1.width/2;
-        const y1 = r1.top - rackRect.top + r1.height/2;
-        const x2 = r2.left - rackRect.left + r2.width/2;
-        const y2 = r2.top - rackRect.top + r2.height/2;
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x1);
-        line.setAttribute('y1', y1);
-        line.setAttribute('x2', x2);
-        line.setAttribute('y2', y2);
-        line.setAttribute('stroke', '#4af74a');
-        line.setAttribute('stroke-width', '2');
-        line.setAttribute('opacity', '0.7');
-        svgEl.appendChild(line);
-      }
-    });
-  }
-
-  document.querySelectorAll('.conn-point').forEach(pt => {
-    pt.onclick = () => {
-      if (!connectionMode) {
-        connectionMode = true;
-        connectionFrom = pt;
-        pt.classList.add('active');
-        drawConnections();
-      } else {
-        if (connectionFrom && connectionFrom !== pt) {
-          const fromId = connectionFrom.dataset.id;
-          const toId = pt.dataset.id;
-          if (fromId && toId && components[fromId] && components[toId]) {
-            components[fromId].connect(components[toId]);
-          }
-        }
-        connectionFrom?.classList.remove('active');
-        connectionMode = false;
-        connectionFrom = null;
-        drawConnections();
-      }
-    };
-  });
-
-  // Keyboard and controls
+  // Keyboard
   const kb = document.getElementById('keyboard');
-  NOTE_NAMES.forEach(n => {
+  Object.keys(NOTES).forEach(n => {
     const k = document.createElement('div');
     k.className = 'key' + (n.includes('#') ? ' sharp' : '');
     k.textContent = n;
@@ -226,92 +100,6 @@ const NOTE_NAMES = Object.keys(NOTES);
 
   document.getElementById('play').onclick = () => { if (ctx.state === 'suspended') ctx.resume(); playNote('C'); };
 
-  // Presets
-  const PRESETS = {
-    bass: { osc1: { on: true, wave: 'sawtooth', freq: 110 }, filter: { type: 'lowpass', freq: 800, q: 5 }, adsr: { a: 0.01, d: 0.2, s: 0.4, r: 0.1 } },
-    lead: { osc1: { on: true, wave: 'square', freq: 440 }, filter: { type: 'lowpass', freq: 3000, q: 2 }, adsr: { a: 0.05, d: 0.1, s: 0.7, r: 0.2 } }
-  };
-
-  document.querySelectorAll('.preset-btn').forEach(b => {
-    if (b.dataset.preset) {
-      b.onclick = () => {
-        const p = PRESETS[b.dataset.preset];
-        if (!p) return;
-        if (p.osc1) {
-          components.osc1.isOn = p.osc1.on;
-          components.osc1.waveform = p.osc1.wave;
-          components.osc1.frequency = p.osc1.freq;
-          components.osc1.update();
-        }
-        if (p.filter) {
-          components.filter.filterType = p.filter.type;
-          components.filter.frequency = p.filter.freq;
-          components.filter.Q = p.filter.q;
-          components.filter.update();
-        }
-        if (p.adsr) {
-          components.adsr.attack = p.adsr.a;
-          components.adsr.decay = p.adsr.d;
-          components.adsr.sustain = p.adsr.s;
-          components.adsr.release = p.adsr.r;
-          components.adsr.adsr.setParams({ attack: p.adsr.a, decay: p.adsr.d, sustain: p.adsr.s, release: p.adsr.r });
-        }
-      };
-    }
-  });
-
-  // Patch save/load
-  document.getElementById('savePatch').onclick = () => {
-    const patch = {
-      components: {
-        osc1: { isOn: components.osc1.isOn, waveform: components.osc1.waveform, frequency: components.osc1.frequency },
-        osc2: { isOn: components.osc2.isOn, waveform: components.osc2.waveform, frequency: components.osc2.frequency },
-        osc3: { isOn: components.osc3.isOn, waveform: components.osc3.waveform, frequency: components.osc3.frequency },
-        filter: { filterType: components.filter.filterType, frequency: components.filter.frequency, Q: components.filter.Q },
-        adsr: { attack: components.adsr.attack, decay: components.adsr.decay, sustain: components.adsr.sustain, release: components.adsr.release },
-        lfo: { rate: components.lfo.rate, depth: components.lfo.depth, waveType: components.lfo.waveType },
-        effects: { delayOn: components.effects.delayOn, reverbOn: components.effects.reverbOn, delayTime: components.effects.delayTime, reverbDuration: components.effects.reverbDuration }
-      },
-      connections: [
-        { from: 'osc1', to: 'filter' },
-        { from: 'filter', to: 'adsr' },
-        { from: 'adsr', to: 'effects' },
-        { from: 'effects', to: 'master' }
-      ]
-    };
-    const blob = new Blob([JSON.stringify(patch, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'patch.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  document.getElementById('loadPatch').onclick = () => {
-    document.getElementById('patchFile').click();
-  };
-
-  document.getElementById('patchFile').onchange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const patch = JSON.parse(ev.target.result);
-        if (patch.components.osc1) {
-          components.osc1.isOn = patch.components.osc1.isOn;
-          components.osc1.waveform = patch.components.osc1.waveform;
-          components.osc1.frequency = patch.components.osc1.frequency;
-          components.osc1.update();
-        }
-        // ... similar for other components
-      } catch(err) { console.error('Patch load error:', err); }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  },
-
   // Visualization
   function draw() {
     requestAnimationFrame(draw);
@@ -321,12 +109,13 @@ const NOTE_NAMES = Object.keys(NOTES);
 
     cvs.fillStyle = '#000000';
     cvs.fillRect(0, 0, w, h);
+
     cvs.strokeStyle = '#4af74a';
     cvs.lineWidth = 2;
     cvs.beginPath();
     const sliceW = w / data.length;
     for (let i = 0; i < data.length; i++) {
-      const y = (data[i] / 128) * h / 2;
+      const y = (data[i] / 128.0) * h / 2;
       if (i === 0) cvs.moveTo(0, y);
       else cvs.lineTo(i * sliceW, y);
     }
@@ -340,8 +129,8 @@ const NOTE_NAMES = Object.keys(NOTES);
     const barWidth = (sw / freqData.length) * 2;
     let barX = 0;
     for (let i = 0; i < freqData.length; i++) {
-      const barHeight = (freqData[i] / 255) * sh;
-      specCvs.fillStyle = `hsl(${(i / freqData.length) * 120 + 80}, 70%, 50%)`;
+      const barHeight = (freqData[i] / 255.0) * sh;
+      specCvs.fillStyle = `hsl(${((i / freqData.length) * 120 + 80)}, 70%, 50%)`;
       specCvs.fillRect(barX, sh - barHeight, barWidth, barHeight);
       barX += barWidth + 1;
     }

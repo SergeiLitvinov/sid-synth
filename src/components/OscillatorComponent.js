@@ -1,6 +1,16 @@
-import { create as createOsc } from '../oscillator/index.js';
+import { sine, square, triangle, noise } from '../oscillator/index.js';
 import { AudioComponent } from './AudioComponent.js';
 import { Knob } from './Knob.js';
+
+function createOsc(type, ctx, freq) {
+  switch(type) {
+    case 'sine': return sine(ctx, freq);
+    case 'square': return square(ctx, freq);
+    case 'triangle': return triangle(ctx, freq);
+    case 'noise': return noise(ctx);
+    default: return square(ctx, freq);
+  }
+}
 
 export class OscillatorComponent extends AudioComponent {
   constructor(ctx, id = 1) {
@@ -68,8 +78,7 @@ export class OscillatorComponent extends AudioComponent {
       this.node = null;
       return;
     }
-    if (!this.isOn) return;
-    
+    if (!this.isOn) return;    
     if (this.node) { try { this.node.stop(); } catch(e) {} this.node.disconnect(); }
     this.node = createOsc(this.waveform, this.ctx, this.frequency);
     try { this.node.start(); } catch(e) {}

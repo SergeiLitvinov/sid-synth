@@ -1,4 +1,6 @@
-export { Lfo } from './lfo.js';
-export { Pwm } from './pwm.js';
-export { RingMod } from './ring_mod.js';
-export { HardSync } from './hard_sync.js';
+import { Lfo } from './lfo.js';
+import { Pwm } from './pwm.js';
+import { RingMod } from './ring_mod.js';
+import { HardSync } from './hard_sync.js';
+
+export { Lfo, Pwm, RingMod, HardSync };

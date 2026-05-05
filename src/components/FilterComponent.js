@@ -1,6 +1,15 @@
-import { create as createFilter } from '../filter/index.js';
+import { lowpass, highpass, bandpass } from '../filter/index.js';
 import { AudioComponent } from './AudioComponent.js';
 import { Knob } from './Knob.js';
+
+function createFilter(type, ctx, freq, Q) {
+  switch(type) {
+    case 'lowpass': return lowpass(ctx, freq, Q);
+    case 'highpass': return highpass(ctx, freq, Q);
+    case 'bandpass': return bandpass(ctx, freq, Q);
+    default: return lowpass(ctx, freq, Q);
+  }
+}
 
 export class FilterComponent extends AudioComponent {
   constructor(ctx) {
@@ -74,16 +83,21 @@ export class FilterComponent extends AudioComponent {
 
   update() {
     if (this.node) {
-      this.node.type = this.filterType;
-      this.node.frequency.value = this.frequency;
-      this.node.Q.value = this.Q;
+      this.node.disconnect();
     }
+    this.node = createFilter(this.filterType, this.ctx, this.frequency, this.Q);
   }
 
   connect(dest) {
     if (this.node && dest.node) {
       this.node.connect(dest.node);
       this.isConnected = true;
+    }
+  }
+
+  connectInput(source) {
+    if (source.node && this.node) {
+      source.node.connect(this.node);
     }
   }
 
