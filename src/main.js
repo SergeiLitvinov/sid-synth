@@ -242,23 +242,19 @@ const NOTES = {
       path.addEventListener('click', (e) => {
         e.stopPropagation();
         e.preventDefault();
-        const idx = parseInt(path.dataset.index);
-        if (!isNaN(idx)) deleteConnection(idx);
+        deleteConnection(index);
       });
       path.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        const idx = parseInt(path.dataset.index);
-        if (!isNaN(idx)) deleteConnection(idx);
+        deleteConnection(index);
       });
       path.addEventListener('mouseenter', () => {
         path.setAttribute('stroke', '#ff4444');
         path.setAttribute('stroke-width', '3');
-        selectedCableIndex = index;
       });
       path.addEventListener('mouseleave', () => {
         path.setAttribute('stroke', '#4af74a');
         path.setAttribute('stroke-width', '2');
-        selectedCableIndex = null;
       });
       path.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -427,18 +423,12 @@ const NOTES = {
     svgEl.appendChild(tempLine);
   });
 
-  // DEL to delete selected cable
-  let selectedCableIndex = null;
-  
+  // ESC to cancel connection
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && currentConnectionFrom) {
       currentConnectionFrom.port.style.background = '';
       currentConnectionFrom = null;
       if (tempLine) { tempLine.remove(); tempLine = null; }
-    }
-    if (e.key === 'Delete' && selectedCableIndex !== null) {
-      deleteConnection(selectedCableIndex);
-      selectedCableIndex = null;
     }
   });
 }
