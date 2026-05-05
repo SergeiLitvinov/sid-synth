@@ -1,6 +1,7 @@
 import { Delay } from '../effects/index.js';
 import { Reverb } from '../effects/index.js';
 import { AudioComponent } from './AudioComponent.js';
+import { Knob } from './Knob.js';
 
 export class EffectsComponent extends AudioComponent {
   constructor(ctx) {
