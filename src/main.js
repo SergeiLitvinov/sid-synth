@@ -239,28 +239,9 @@ const NOTES = {
       path.style.cursor = 'pointer';
       path.title = `Click to delete ${conn.from} → ${toLabel}`;
       path.dataset.index = index;
-      path.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        deleteConnection(index);
-      });
-      path.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        deleteConnection(index);
-      });
-      path.addEventListener('mouseenter', () => {
-        path.setAttribute('stroke', '#ff4444');
-        path.setAttribute('stroke-width', '3');
-      });
-      path.addEventListener('mouseleave', () => {
-        path.setAttribute('stroke', '#4af74a');
-        path.setAttribute('stroke-width', '2');
-      });
-      path.addEventListener('click', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        deleteConnection(index);
-      });
+      
+      path.onclick = () => deleteConnection(index);
+      
       svgEl.appendChild(path);
       
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -276,8 +257,7 @@ const NOTES = {
   // Direct click on cable deletes it, DEL key also works
   // No complex UI - just click the cable or press DEL
 
-  function deleteConnection(index) {
-    const idx = typeof index === 'string' ? parseInt(index) : index;
+  function deleteConnection(idx) {
     if (isNaN(idx) || idx < 0 || idx >= connections.length) return;
     const conn = connections[idx];
     
