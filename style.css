@@ -46,12 +46,57 @@ canvas {
   margin-top: 8px;
 }
 
+.workspace {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.tool-bar {
+  width: 120px;
+  background: #0d120d;
+  border: 1px solid #2a3a2a;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-bar-title {
+  color: #4af74a;
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #1a2a1a;
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.tool-item {
+  background: #050805;
+  color: #4af74a;
+  border: 1px solid #2a3a2a;
+  padding: 6px 8px;
+  cursor: grab;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-align: center;
+  user-select: none;
+}
+
+.tool-item:hover {
+  background: #4af74a;
+  color: #000;
+  box-shadow: 0 0 10px #4af74a;
+}
+
 .rack {
   position: relative;
+  flex: 1;
   min-height: 400px;
-  margin-bottom: 15px;
   border: 1px solid #1a2a1a;
   padding: 10px;
+  overflow: auto;
 }
 
 .component {

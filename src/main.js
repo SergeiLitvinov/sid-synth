@@ -1,7 +1,11 @@
 import { OscillatorComponent } from './components/OscillatorComponent.js';
 import { FilterComponent } from './components/FilterComponent.js';
 import { AdsrComponent } from './components/AdsrComponent.js';
+import { LfoComponent } from './components/LfoComponent.js';
 import { EffectsComponent } from './components/EffectsComponent.js';
+import { MixerComponent } from './components/MixerComponent.js';
+import { SplitterComponent } from './components/SplitterComponent.js';
+import { SequencerComponent } from './components/SequencerComponent.js';
 
 console.log('SID Synth Modular loaded');
 
@@ -24,6 +28,11 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
   specCanvas.width = canvas.width;
   specCanvas.height = 120;
 
+  window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth > 800 ? 750 : window.innerWidth - 40;
+    specCanvas.width = canvas.width;
+  });
+
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 4096;
   masterGain.connect(analyser);
@@ -34,31 +43,143 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
 
   const rack = document.getElementById('rack');
   const components = {};
+  let componentId = 0;
 
-  // Create components
-  components.osc1 = new OscillatorComponent(ctx, 1);
-  rack.appendChild(components.osc1.element);
+  // Tool items drag start
+  document.querySelectorAll('.tool-item').forEach(item => {
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('type', item.dataset.type);
+      e.dataTransfer.setData('id', item.dataset.id || '');
+    });
+    item.draggable = true;
+  });
 
-  components.filter = new FilterComponent(ctx);
-  rack.appendChild(components.filter.element);
+  // Rack drop zone
+  rack.addEventListener('dragover', e => {
+    e.preventDefault();
+    rack.style.borderColor = '#4af74a';
+  });
 
-  components.adsr = new AdsrComponent(ctx);
-  rack.appendChild(components.adsr.element);
+  rack.addEventListener('dragleave', () => {
+    rack.style.borderColor = '#1a2a1a';
+  });
 
-  components.effects = new EffectsComponent(ctx);
-  rack.appendChild(components.effects.element);
+  rack.addEventListener('drop', e => {
+    e.preventDefault();
+    rack.style.borderColor = '#1a2a1a';
+    const type = e.dataTransfer.getData('type');
+    const id = e.dataTransfer.getData('id');
+    const x = e.clientX - rack.getBoundingClientRect().left;
+    const y = e.clientY - rack.getBoundingClientRect().top;
+    createComponent(type, id, x, y);
+  });
 
-  // Connect audio chain: osc1 -> filter -> adsr -> effects -> master
-  // Osc1 output to Filter input
-  components.osc1.outputGain.connect(components.filter.inputGain);
-  // Filter output to ADSR input
-  components.filter.node.connect(components.adsr.inputGain);
-  // ADSR output to Effects input
-  components.adsr.node.connect(components.effects.inputGain);
-  // Effects output to master
-  components.effects.node.connect(masterGain);
+  function createComponent(type, id, x, y) {
+    let comp;
+    const newId = id || `${type}_${++componentId}`;
+    
+    switch(type) {
+      case 'oscillator':
+        comp = new OscillatorComponent(ctx, id ? parseInt(id.replace('osc', '')) : 1);
+        break;
+      case 'filter':
+        comp = new FilterComponent(ctx);
+        break;
+      case 'adsr':
+        comp = new AdsrComponent(ctx);
+        break;
+      case 'effects':
+        comp = new EffectsComponent(ctx);
+        break;
+      case 'lfo':
+        comp = new LfoComponent(ctx);
+        break;
+      case 'mixer':
+        comp = new MixerComponent(ctx);
+        break;
+      case 'splitter':
+        comp = new SplitterComponent(ctx);
+        break;
+      case 'sequencer':
+        comp = new SequencerComponent(ctx);
+        break;
+      default:
+        return;
+    }
+    
+    components[newId] = comp;
+    rack.appendChild(comp.element);
+    comp.element.style.left = (x - 100) + 'px';
+    comp.element.style.top = (y - 60) + 'px';
+    makeDraggable(comp.element);
+  }
 
-  console.log('Audio chain connected');
+  function makeDraggable(el) {
+    let isDragging = false;
+    let offsetX = 0, offsetY = 0;
+
+    el.addEventListener('mousedown', e => {
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg')) return;
+      isDragging = true;
+      const rect = el.getBoundingClientRect();
+      offsetX = e.clientX - rect.left;
+      offsetY = e.clientY - rect.top;
+      el.style.zIndex = 1000;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      const rackRect = rack.getBoundingClientRect();
+      let x = e.clientX - rackRect.left - offsetX;
+      let y = e.clientY - rackRect.top - offsetY;
+      x = Math.max(0, Math.min(x, rackRect.width - el.offsetWidth));
+      y = Math.max(0, Math.min(y, rackRect.height - el.offsetHeight));
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+      drawConnections();
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        el.style.zIndex = '';
+        isDragging = false;
+      }
+    });
+  }
+
+  function drawConnections() {
+    const svgEl = document.getElementById('connectionsSvg');
+    while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+    
+    // Draw active connection point
+    document.querySelectorAll('.conn-point').forEach(pt => {
+      if (pt.classList.contains('active')) {
+        const rect = pt.getBoundingClientRect();
+        const rackRect = rack.getBoundingClientRect();
+        const x = rect.left - rackRect.left + rect.width/2;
+        const y = rect.top - rackRect.top + rect.height/2;
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', x);
+        circle.setAttribute('cy', y);
+        circle.setAttribute('r', 4);
+        circle.setAttribute('fill', '#4af74a');
+        svgEl.appendChild(circle);
+      }
+    });
+  }
+
+  // Default connection: osc1 -> filter -> adsr -> effects -> master
+  // (if components exist)
+  function setupDefaultConnection() {
+    if (components.osc1 && components.filter && components.adsr && components.effects) {
+      components.osc1.connect(components.filter);
+      components.filter.connectInput(components.osc1);
+      components.adsr.connectInput(components.filter);
+      components.effects.connectInput(components.adsr);
+      components.effects.connect({ node: masterGain });
+    }
+  }
 
   // Keyboard
   const kb = document.getElementById('keyboard');
@@ -66,12 +187,12 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     const k = document.createElement('div');
     k.className = 'key' + (n.includes('#') ? ' sharp' : '');
     k.textContent = n;
-    k.onmousedown = () => {
+    k.addEventListener('mousedown', () => {
       if (ctx.state === 'suspended') ctx.resume();
       playNote(n);
-    };
-    k.onmouseup = () => stopAll();
-    k.onmouseleave = () => { if (!isPlaying) stopAll(); };
+    });
+    k.addEventListener('mouseup', () => stopAll());
+    k.addEventListener('mouseleave', () => { if (!isPlaying) stopAll(); });
     kb.appendChild(k);
   });
 
@@ -79,15 +200,17 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
 
   function playNote(note) {
     if (ctx.state === 'suspended') ctx.resume();
-    components.osc1.frequency = NOTES[note] || 440;
-    components.osc1.update();
-    components.adsr.triggerAttack();
+    if (components.osc1) {
+      components.osc1.frequency = NOTES[note] || 440;
+      components.osc1.update();
+    }
+    if (components.adsr) components.adsr.triggerAttack();
     document.getElementById('noteDisplay').textContent = note;
     isPlaying = true;
   }
 
   function stopAll() {
-    components.adsr.triggerRelease();
+    if (components.adsr) components.adsr.triggerRelease();
     document.getElementById('noteDisplay').textContent = '_';
     isPlaying = false;
   }
@@ -133,4 +256,11 @@ const NOTES = { 'C': 261.63, 'C#': 277.18, 'D': 293.66, 'D#': 311.13, 'E': 329.6
     }
   }
   draw();
+
+  // Create default components for testing
+  createComponent('oscillator', 'osc1', 50, 50);
+  createComponent('filter', 'filter', 270, 50);
+  createComponent('adsr', 'adsr', 490, 50);
+  createComponent('effects', 'effects', 50, 220);
+  setupDefaultConnection();
 })();

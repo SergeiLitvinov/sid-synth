@@ -16,25 +16,32 @@
       <div class="note-display" id="noteDisplay">_</div>
     </div>
 
-    <div class="rack" id="rack">
-      <!-- Компоненты будут добавляться динамически -->
-      <svg class="connection-line" id="connectionsSvg"></svg>
-    </div>
-
-    <div class="panel">
-      <h2>ARPEGGIATOR</h2>
-      <div class="param-row">
-        <label><input type="checkbox" id="arpOn"> ON</label>
-        <input type="number" id="arpSpeed" value="100" placeholder="ms" style="width:55px">
-        <select id="arpPattern" style="width:65px">
-          <option value="up">UP</option>
-          <option value="down">DOWN</option>
-          <option value="random">RAND</option>
-        </select>
+    <div class="workspace">
+      <div class="toolbar" id="toolbar">
+        <div class="toolbar-title">COMPONENTS</div>
+        <div class="tool-item" data-type="oscillator" data-id="osc1">OSC 1</div>
+        <div class="tool-item" data-type="oscillator" data-id="osc2">OSC 2</div>
+        <div class="tool-item" data-type="oscillator" data-id="osc3">OSC 3</div>
+        <div class="tool-item" data-type="filter">FILTER</div>
+        <div class="tool-item" data-type="adsr">ADSR</div>
+        <div class="tool-item" data-type="effects">EFFECTS</div>
+        <div class="tool-item" data-type="lfo">LFO</div>
+        <div class="tool-item" data-type="mixer">MIXER</div>
+        <div class="tool-item" data-type="splitter">SPLITTER</div>
+        <div class="tool-item" data-type="sequencer">SEQ</div>
+      </div>
+      <div class="rack" id="rack">
+        <svg class="connection-line" id="connectionsSvg"></svg>
       </div>
     </div>
 
-    <!-- Old sequencer controls removed, now in component -->
+    <div class="panel">
+      <div class="row row-center">
+        <button class="preset-btn" data-preset="bass">BASS</button>
+        <button class="preset-btn" data-preset="lead">LEAD</button>
+        <button class="preset-btn" data-preset="pad">PAD</button>
+        <button class="preset-btn" data-preset="drum">DRUM</button>
+      </div>
       <div class="row row-center" style="margin-top:6px">
         <button class="preset-btn" id="savePreset">SAVE</button>
         <button class="preset-btn" id="loadPreset">LOAD</button>
@@ -48,16 +55,12 @@
       </div>
     </div>
 
-    <!-- Sequencer moved to component -->
-    </div>
-
     <div class="keyboard" id="keyboard"></div>
     
     <div class="row row-center" style="margin-top:10px">
       <button class="preset-btn" id="midiConnect">MIDI CONNECT</button>
       <span id="midiStatus" style="color:#3a5a3a;font-size:11px;letter-spacing:1px;"></span>
-    </div>
-    
+    </div>    
     <button class="preset-btn" style="width:100%;padding:14px;font-size:14px;letter-spacing:4px;margin-top:10px;" id="play">PLAY NOTE</button>
   </div>
   <script type="module" src="src/main.js"></script>
