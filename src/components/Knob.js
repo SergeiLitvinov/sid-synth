@@ -31,6 +31,24 @@ export class Knob {
     bg.setAttribute('stroke-width', 2);
     svg.appendChild(bg);
 
+    // Scale marks
+    for (let i = 0; i <= 10; i++) {
+      const angle = (i / 10) * 270 - 135;
+      const rad = angle * Math.PI / 180;
+      const x1 = 50 + 38 * Math.cos(rad);
+      const y1 = 50 + 38 * Math.sin(rad);
+      const x2 = 50 + 42 * Math.cos(rad);
+      const y2 = 50 + 42 * Math.sin(rad);
+      const mark = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      mark.setAttribute('x1', x1);
+      mark.setAttribute('y1', y1);
+      mark.setAttribute('x2', x2);
+      mark.setAttribute('y2', y2);
+      mark.setAttribute('stroke', i % 5 === 0 ? '#4af74a' : '#2a3a2a');
+      mark.setAttribute('stroke-width', i % 5 === 0 ? 2 : 1);
+      svg.appendChild(mark);
+    }
+
     // Indicator
     this.indicator = document.createElementNS('http://www.w3.org/2000/svg', 'line');
     this.indicator.setAttribute('x1', 50);
@@ -59,21 +77,22 @@ export class Knob {
     let isDragging = false;
     let startY = 0;
     let startValue = 0;
+    const self = this;
 
-    svg.onmousedown = (e) => {
+    svg.addEventListener('mousedown', (e) => {
       isDragging = true;
       startY = e.clientY;
-      startValue = this.value;
+      startValue = self.value;
       e.preventDefault();
-    };
+    });
 
-    document.onmousemove = (e) => {
+    document.addEventListener('mousemove', (e) => {
       if (!isDragging) return;
       const delta = (startY - e.clientY) * 0.5;
-      this.setValue(startValue + delta);
-    };
+      self.setValue(startValue + delta);
+    });
 
-    document.onmouseup = () => { isDragging = false; };
+    document.addEventListener('mouseup', () => { isDragging = false; });
 
     return container;
   }

@@ -4,6 +4,9 @@ export class SplitterComponent extends AudioComponent {
   constructor(ctx) {
     super(ctx, 'splitter', 'SPLITTER');
     this.splitter = ctx.createChannelSplitter(2);
+    this.inputGain = ctx.createGain();
+    this.inputGain.connect(this.splitter);
+    this.outputGain = this.splitter;
     this.node = this.splitter;
     this.element = this.createElement();
   }

@@ -332,7 +332,11 @@ button.btn-red:hover { background: #aa4444; color: #000; }
   left: 0;
   width: 100%;
   height: 100%;
-  pointer-events: none;
+}
+
+.connection-line path,
+.connection-line g {
+  pointer-events: all;
 }
 
 .connection-line line {

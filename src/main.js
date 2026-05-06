@@ -9,10 +9,10 @@ import { SequencerComponent } from './components/SequencerComponent.js';
 
 console.log('SID Synth Modular loaded');
 
-const NOTES = {
+const NOTES = { 
   'C2': 65.41, 'C#2': 69.30, 'D2': 73.42, 'D#2': 77.78, 'E2': 82.41, 'F2': 87.31, 'F#2': 92.50, 'G2': 98.00, 'G#2': 103.83, 'A2': 110.00, 'A#2': 116.54, 'B2': 123.47,
   'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81, 'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00, 'A#3': 233.08, 'B3': 246.94,
-  'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88
+  'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88 
 };
 
 (async () => {
@@ -142,6 +142,7 @@ const NOTES = {
   let connections = [];
   let currentConnectionFrom = null;
   let tempLine = null;
+  let selectedConnection = null;
 
   let dragRAF = null;
   let dragState = null;
@@ -220,12 +221,21 @@ const NOTES = {
       } else {
         const toComp = components[conn.to];
         if (!toComp || !toComp.element) return;
-        const toInput = toComp.element.querySelector('[data-type="input"]');
+        
+        let toInput;
+        // For mixer, find specific channel input
+        if (toComp.type === 'mixer' && conn.toChannel !== null) {
+          toInput = toComp.element.querySelector(`[data-type="input"][data-channel="${conn.toChannel}"]`);
+          toLabel = `${conn.to} CH${conn.toChannel + 1}`;
+        } else {
+          toInput = toComp.element.querySelector('[data-type="input"]');
+          toLabel = conn.to;
+        }
+        
         if (!toInput) return;
         const r2 = toInput.getBoundingClientRect();
         x2 = r2.left - rackRect.left + r2.width/2;
         y2 = r2.top - rackRect.top + r2.height/2;
-        toLabel = conn.to;
       }
       
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -233,47 +243,39 @@ const NOTES = {
       const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
       path.setAttribute('d', d);
       path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', '#4af74a');
-      path.setAttribute('stroke-width', '2');
-      path.setAttribute('opacity', '0.7');
+      path.setAttribute('stroke', selectedConnection === index ? '#ffaa00' : '#4af74a');
+      path.setAttribute('stroke-width', selectedConnection === index ? '3' : '2');
+      path.setAttribute('opacity', selectedConnection === index ? '1' : '0.7');
       path.style.cursor = 'pointer';
-      path.title = `Click to delete ${conn.from} → ${toLabel}`;
       path.dataset.index = index;
-      path.style.pointerEvents = 'all';
       
       path.addEventListener('click', (e) => {
         e.stopPropagation();
-        e.preventDefault();
-        const idx = parseInt(path.dataset.index);
-        console.log('Cable clicked! Index:', idx);
-        if (!isNaN(idx)) deleteConnection(idx);
+        if (selectedConnection === index) {
+          deleteConnection(index);
+          selectedConnection = null;
+        } else {
+          selectedConnection = index;
+          drawConnections();
+        }
       });
       
-      svgEl.appendChild(path);
+      path.addEventListener('mouseenter', () => {
+        if (selectedConnection !== index) {
+          path.setAttribute('opacity', '1');
+          path.setAttribute('stroke-width', '3');
+        }
+      });
       
-      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      label.setAttribute('x', (x1 + x2) / 2);
-      label.setAttribute('y', (y1 + y2) / 2 - 5);
-      label.setAttribute('fill', '#4af74a');
-      label.setAttribute('font-size', '8px');
-      label.textContent = `${conn.from} → ${toLabel}`;
-      svgEl.appendChild(label);
-    });
-  }
+      path.addEventListener('mouseleave', () => {
+        if (selectedConnection !== index) {
+          path.setAttribute('opacity', '0.7');
+          path.setAttribute('stroke-width', '2');
+        }
+      });
       
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const cx = (x1 + x2) / 2;
-      const d = `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`;
-      path.setAttribute('d', d);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', '#4af74a');
-      path.setAttribute('stroke-width', '2');
-      path.setAttribute('opacity', '0.7');
-      path.style.cursor = 'pointer';
-      path.title = `Click to delete ${conn.from} → ${toLabel}`;
-      path.dataset.index = index;
-      
-      path.addEventListener('click', () => deleteConnection(index));
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
       
       svgEl.appendChild(path);
       
@@ -286,17 +288,10 @@ const NOTES = {
       svgEl.appendChild(label);
     });
   }
-  
-  // Direct click on cable deletes it, DEL key also works
-  // No complex UI - just click the cable or press DEL
 
-  function deleteConnection(idx) {
-    console.log('Deleting cable index:', idx, 'connections length:', connections.length);
-    if (isNaN(idx) || idx < 0 || idx >= connections.length) {
-      console.log('Invalid index, aborting');
-      return;
-    }
-    const conn = connections[idx];
+  function deleteConnection(index) {
+    if (isNaN(index) || index < 0 || index >= connections.length) return;
+    const conn = connections[index];
     
     // Disconnect audio
     const fromComp = components[conn.from];
@@ -305,113 +300,20 @@ const NOTES = {
         try { fromComp.outputGain.disconnect(masterGain); } catch(e) {}
       } else {
         const toComp = components[conn.to];
-        if (toComp && toComp.inputGain) {
-          try { fromComp.outputGain.disconnect(toComp.inputGain); } catch(e) {}
+        if (toComp) {
+          if (toComp.type === 'mixer' && conn.toChannel !== null && toComp.inputGains) {
+            try { fromComp.outputGain.disconnect(toComp.inputGains[conn.toChannel]); } catch(e) {}
+          } else if (toComp.inputGain) {
+            try { fromComp.outputGain.disconnect(toComp.inputGain); } catch(e) {}
+          }
         }
       }
     }
     
     connections.splice(index, 1);
-    selectedCableIndex = null;
-    hideCableDeleteUI();
     drawConnections();
   }
 
-  // Save/Load patch connections
-  function savePatch() {
-    const patch = {
-      connections: connections.map(c => ({ from: c.from, to: c.to })),
-      components: Object.keys(components).map(id => ({
-        id,
-        type: components[id].type,
-        label: components[id].label,
-        frequency: components[id].frequency,
-        waveform: components[id].waveform
-      }))
-    };
-    const blob = new Blob([JSON.stringify(patch, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'sid-synth-patch.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function loadPatch(file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const patch = JSON.parse(e.target.result);
-        // Clear existing
-        Object.keys(components).forEach(id => {
-          components[id].dispose();
-          components[id].element.remove();
-        });
-        connections = [];
-        components = {};
-        
-        // Recreate components (simplified - just log for now)
-        console.log('Loaded patch:', patch);
-        alert('Patch loaded! Check console for details.');
-      } catch(err) {
-        console.error('Failed to load patch:', err);
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function initPortClicks() {
-    // Master output port
-    const masterPort = document.getElementById('masterOutput');
-    if (masterPort) {
-      masterPort.style.cursor = 'crosshair';
-      masterPort.title = 'Click to connect component output here';
-      masterPort.onclick = () => {
-        if (currentConnectionFrom) {
-          addConnection(currentConnectionFrom.id, 'master');
-          currentConnectionFrom.port.style.background = '';
-          currentConnectionFrom = null;
-        }
-      };
-    }
-
-    Object.keys(components).forEach(id => {
-      const comp = components[id];
-      if (!comp || !comp.element) return;
-      
-      const outputPort = comp.element.querySelector('[data-type="output"]');
-      const inputPort = comp.element.querySelector('[data-type="input"]');
-      
-      if (outputPort) {
-        outputPort.style.cursor = 'crosshair';
-        outputPort.title = 'Click to connect output';
-        outputPort.onclick = (e) => {
-          e.stopPropagation();
-          if (currentConnectionFrom) {
-            currentConnectionFrom.port.style.background = '';
-            if (currentConnectionFrom.id === id) {
-              currentConnectionFrom = null;
-              if (tempLine) { tempLine.remove(); tempLine = null; }
-              return;
-            }
-            addConnection(currentConnectionFrom.id, id);
-            currentConnectionFrom.port.style.background = '';
-            currentConnectionFrom = null;
-            if (tempLine) { tempLine.remove(); tempLine = null; }
-          } else {
-            currentConnectionFrom = { id, port: outputPort };
-            outputPort.style.background = '#4af74a';
-          }
-        };
-      }
-      
-      if (inputPort) {
-        inputPort.style.cursor = 'crosshair';
-        inputPort.title = 'Click to receive connection';
-      }
-    });
-    
   // Temp line for active connection
   document.addEventListener('mousemove', e => {
     if (!currentConnectionFrom) return;
@@ -440,32 +342,135 @@ const NOTES = {
     svgEl.appendChild(tempLine);
   });
 
-  // ESC to cancel connection
+  // Keyboard handlers
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && currentConnectionFrom) {
-      currentConnectionFrom.port.style.background = '';
-      currentConnectionFrom = null;
-      if (tempLine) { tempLine.remove(); tempLine = null; }
+    if (e.key === 'Escape') {
+      if (currentConnectionFrom) {
+        currentConnectionFrom.port.style.background = '';
+        currentConnectionFrom = null;
+        if (tempLine) { tempLine.remove(); tempLine = null; }
+      }
+      selectedConnection = null;
+      drawConnections();
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedConnection !== null) {
+        deleteConnection(selectedConnection);
+        selectedConnection = null;
+      }
     }
   });
-}
 
-  function addConnection(fromId, toId) {
+  function initPortClicks() {
+    // Master output port
+    const masterPort = document.getElementById('masterOutput');
+    if (masterPort) {
+      masterPort.style.cursor = 'crosshair';
+      masterPort.title = 'Click to connect component output here';
+      masterPort.onclick = () => {
+        if (currentConnectionFrom) {
+          addConnection(currentConnectionFrom.id, 'master');
+          currentConnectionFrom.port.style.background = '';
+          currentConnectionFrom = null;
+        }
+      };
+    }
+
+    Object.keys(components).forEach(id => {
+      const comp = components[id];
+      if (!comp || !comp.element) return;
+      
+      // Handle output ports - all of them
+      const outputPorts = comp.element.querySelectorAll('[data-type="output"]');
+      outputPorts.forEach(outputPort => {
+        outputPort.style.cursor = 'crosshair';
+        outputPort.title = 'Click to connect output';
+        outputPort.onclick = (e) => {
+          e.stopPropagation();
+          if (currentConnectionFrom) {
+            if (currentConnectionFrom.id === id) {
+              currentConnectionFrom = null;
+              if (tempLine) { tempLine.remove(); tempLine = null; }
+              return;
+            }
+            addConnection(currentConnectionFrom.id, id);
+            currentConnectionFrom.port.style.background = '';
+            currentConnectionFrom = null;
+            if (tempLine) { tempLine.remove(); tempLine = null; }
+          } else {
+            currentConnectionFrom = { id, port: outputPort };
+            outputPort.style.background = '#4af74a';
+          }
+        };
+      });
+      
+      // Handle input ports - all of them
+      const inputPorts = comp.element.querySelectorAll('[data-type="input"]');
+      inputPorts.forEach(inputPort => {
+        inputPort.style.cursor = 'crosshair';
+        inputPort.title = 'Click to receive connection';
+        inputPort.onclick = (e) => {
+          e.stopPropagation();
+          
+          // Check if there's a connection to this input - click to disconnect
+          const existingConnIndex = connections.findIndex(c => {
+            if (comp.type === 'mixer') {
+              return c.to === id && c.toChannel !== null && 
+                inputPort.dataset.channel == c.toChannel;
+            }
+            return c.to === id;
+          });
+          
+          if (existingConnIndex !== -1) {
+            // Disconnect existing connection
+            deleteConnection(existingConnIndex);
+            return;
+          }
+          
+          // If creating connection, connect to this input
+          if (currentConnectionFrom) {
+            let toChannel = null;
+            if (comp.type === 'mixer' && inputPort.dataset.channel !== undefined) {
+              toChannel = parseInt(inputPort.dataset.channel);
+            }
+            addConnection(currentConnectionFrom.id, id, toChannel);
+            currentConnectionFrom.port.style.background = '';
+            currentConnectionFrom = null;
+            if (tempLine) { tempLine.remove(); tempLine = null; }
+          }
+        };
+      });
+    });
+  }
+
+  function addConnection(fromId, toId, toChannel = null) {
     if (fromId === toId) return;
-    if (connections.some(c => c.from === fromId && c.to === toId)) return;
+    if (connections.some(c => c.from === fromId && c.to === toId && c.toChannel === toChannel)) return;
     
-    connections.push({ from: fromId, to: toId });
+    let channel = toChannel;
+    const fromComp = components[fromId];
+    const toComp = components[toId];
     
     // Audio connection
-    const fromComp = components[fromId];
     if (fromComp && fromComp.outputGain) {
       if (toId === 'master') {
-        // Connect to master output
         fromComp.outputGain.connect(masterGain);
-      } else {
-        const toComp = components[toId];
-        if (toComp && toComp.inputGain) {
+        connections.push({ from: fromId, to: toId, toChannel: null });
+      } else if (toComp) {
+        // Handle mixer - use channel from input port
+        if (toComp.type === 'mixer' && toComp.inputGains) {
+          if (channel === null) {
+            // Find first available channel
+            let usedChannels = connections.filter(c => c.to === toId && c.toChannel !== null).map(c => c.toChannel);
+            channel = [0,1,2,3].find(i => !usedChannels.includes(i));
+          }
+          if (channel !== undefined) {
+            connections.push({ from: fromId, to: toId, toChannel: channel });
+            fromComp.outputGain.connect(toComp.inputGains[channel]);
+          }
+        } else if (toComp.inputGain) {
           fromComp.outputGain.connect(toComp.inputGain);
+          connections.push({ from: fromId, to: toId, toChannel: null });
         }
       }
     }
@@ -496,27 +501,55 @@ const NOTES = {
 
   function playNote(note) {
     if (ctx.state === 'suspended') ctx.resume();
-    const oscId = findComponentByType('oscillator');
-    if (oscId && components[oscId]) {
-      components[oscId].outputGain.gain.setTargetAtTime(1, ctx.currentTime, 0.01);
-      components[oscId].frequency = NOTES[note] || 440;
-      components[oscId].update();
-    }
-    const adsrId = findComponentByType('adsr');
-    if (adsrId && components[adsrId]) components[adsrId].triggerAttack();
+    
+    // Find all oscillators that are connected to something
+    const oscIds = Object.keys(components).filter(id => components[id].type === 'oscillator');
+    oscIds.forEach(oscId => {
+      const osc = components[oscId];
+      // Check if this oscillator is connected to something
+      const isConnected = connections.some(c => c.from === oscId);
+      if (isConnected && osc.outputGain) {
+        osc.outputGain.gain.setTargetAtTime(1, ctx.currentTime, 0.01);
+        osc.frequency = NOTES[note] || 440;
+        osc.update();
+      }
+    });
+    
+    // Trigger all connected ADSRs
+    const adsrIds = Object.keys(components).filter(id => components[id].type === 'adsr');
+    adsrIds.forEach(adsrId => {
+      const adsr = components[adsrId];
+      const isConnected = connections.some(c => c.to === adsrId);
+      if (isConnected) adsr.triggerAttack();
+    });
+    
     document.getElementById('noteDisplay').textContent = note;
     isPlaying = true;
   }
 
   function stopAll() {
-    const oscId = findComponentByType('oscillator');
-    if (oscId && components[oscId]) {
-      components[oscId].outputGain.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
-    }
-    const adsrId = findComponentByType('adsr');
-    if (adsrId && components[adsrId]) components[adsrId].triggerRelease();
+    // Stop all oscillators
+    const oscIds = Object.keys(components).filter(id => components[id].type === 'oscillator');
+    oscIds.forEach(oscId => {
+      const osc = components[oscId];
+      if (osc.outputGain) {
+        osc.outputGain.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+      }
+    });
+    
+    // Release all ADSRs
+    const adsrIds = Object.keys(components).filter(id => components[id].type === 'adsr');
+    adsrIds.forEach(adsrId => {
+      const adsr = components[adsrId];
+      adsr.triggerRelease();
+    });
+    
     document.getElementById('noteDisplay').textContent = '_';
     isPlaying = false;
+  }
+
+  function findComponentByType(type) {
+    return Object.keys(components).find(id => components[id].type === type);
   }
 
   // Presets
@@ -529,10 +562,6 @@ const NOTES = {
     bass2: { osc1: { on: true, wave: 'triangle', freq: 55 }, filter: { type: 'lowpass', freq: 400, q: 6 }, adsr: { a: 0.05, d: 0.3, s: 0.6, r: 0.2 } },
     fx: { osc1: { on: true, wave: 'noise', freq: 800 }, filter: { type: 'highpass', freq: 2000, q: 1 }, adsr: { a: 0.01, d: 0.05, s: 0.3, r: 0.1 } }
   };
-
-  function findComponentByType(type) {
-    return Object.keys(components).find(id => components[id].type === type);
-  }
 
   document.querySelectorAll('.preset-btn').forEach(b => {
     if (b.dataset.preset) {
@@ -571,6 +600,17 @@ const NOTES = {
       });
     }
   });
+
+  // Save/Load patch buttons
+  const savePatchBtn = document.getElementById('savePatch');
+  const loadPatchBtn = document.getElementById('loadPatch');
+  const patchFileInput = document.getElementById('patchFile');
+  
+  if (savePatchBtn) savePatchBtn.onclick = savePatch;
+  if (loadPatchBtn) loadPatchBtn.onclick = () => patchFileInput.click();
+  if (patchFileInput) patchFileInput.onchange = (e) => {
+    if (e.target.files[0]) loadPatch(e.target.files[0]);
+  };
 
   // Visualization loop
   function draw() {
@@ -641,15 +681,4 @@ const NOTES = {
     midiBtn.disabled = true;
     midiStatus.textContent = 'NO MIDI';
   }
-
-  // Save/Load patch buttons
-  const savePatchBtn = document.getElementById('savePatch');
-  const loadPatchBtn = document.getElementById('loadPatch');
-  const patchFileInput = document.getElementById('patchFile');
-  
-  if (savePatchBtn) savePatchBtn.onclick = savePatch;
-  if (loadPatchBtn) loadPatchBtn.onclick = () => patchFileInput.click();
-  if (patchFileInput) patchFileInput.onchange = (e) => {
-    if (e.target.files[0]) loadPatch(e.target.files[0]);
-  };
 })();

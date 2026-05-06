@@ -10,7 +10,8 @@ export class LfoComponent extends AudioComponent {
     this.depth = 50;
     this.waveType = 'sine';
     this.lfo = null;
-    this.node = ctx.createGain(); // temporary gain node
+    this.outputGain = ctx.createGain();
+    this.node = this.outputGain;
     this.rateKnob = null;
     this.depthKnob = null;
     this.element = this.createElement();

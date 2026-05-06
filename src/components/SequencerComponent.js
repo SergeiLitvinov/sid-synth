@@ -8,6 +8,10 @@ export class SequencerComponent extends AudioComponent {
     this.steps = 16;
     this.pattern = new Array(this.steps).fill(null);
     this.isPlaying = false;
+    this.inputGain = ctx.createGain();
+    this.outputGain = ctx.createGain();
+    this.inputGain.connect(this.outputGain);
+    this.node = this.outputGain;
     this.element = this.createElement();
   }
 
