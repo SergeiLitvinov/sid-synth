@@ -452,26 +452,26 @@ const NOTES = {
     const toComp = components[toId];
     
     // Audio connection
-    if (fromComp && fromComp.outputGain) {
+    const fromOutput = fromComp ? fromComp.outputGain : null;
+    const toInput = toComp ? (toComp.inputGain || (toComp.inputGains && toComp.inputGains[channel])) : null;
+    
+    if (fromOutput && toInput) {
       if (toId === 'master') {
-        fromComp.outputGain.connect(masterGain);
+        fromOutput.connect(masterGain);
         connections.push({ from: fromId, to: toId, toChannel: null });
-      } else if (toComp) {
-        // Handle mixer - use channel from input port
-        if (toComp.type === 'mixer' && toComp.inputGains) {
-          if (channel === null) {
-            // Find first available channel
-            let usedChannels = connections.filter(c => c.to === toId && c.toChannel !== null).map(c => c.toChannel);
-            channel = [0,1,2,3].find(i => !usedChannels.includes(i));
-          }
-          if (channel !== undefined) {
-            connections.push({ from: fromId, to: toId, toChannel: channel });
-            fromComp.outputGain.connect(toComp.inputGains[channel]);
-          }
-        } else if (toComp.inputGain) {
-          fromComp.outputGain.connect(toComp.inputGain);
-          connections.push({ from: fromId, to: toId, toChannel: null });
+      } else if (toComp.type === 'mixer' && toComp.inputGains) {
+        // Find first available channel if not specified
+        if (channel === null) {
+          let usedChannels = connections.filter(c => c.to === toId && c.toChannel !== null).map(c => c.toChannel);
+          channel = [0,1,2,3].find(i => !usedChannels.includes(i));
         }
+        if (channel !== undefined) {
+          connections.push({ from: fromId, to: toId, toChannel: channel });
+          fromOutput.connect(toComp.inputGains[channel]);
+        }
+      } else if (toInput) {
+        fromOutput.connect(toInput);
+        connections.push({ from: fromId, to: toId, toChannel: null });
       }
     }
     
