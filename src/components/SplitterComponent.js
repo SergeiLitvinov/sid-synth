@@ -29,6 +29,7 @@ export class SplitterComponent extends AudioComponent {
       out.className = 'conn-point conn-output';
       out.dataset.type = 'output';
       out.dataset.id = `splitter-out${i}`;
+      out.dataset.channel = i;
       out.style.top = (30 + i * 25) + 'px';
       el.appendChild(out);
     }

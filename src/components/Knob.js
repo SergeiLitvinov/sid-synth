@@ -73,26 +73,27 @@ export class Knob {
     this.updateValueDisplay();
     container.appendChild(this.valueDisplay);
 
-    // Interaction
+    // Interaction (pointer capture — auto-cleaned when element is removed)
     let isDragging = false;
     let startY = 0;
     let startValue = 0;
     const self = this;
 
-    svg.addEventListener('mousedown', (e) => {
+    svg.addEventListener('pointerdown', (e) => {
       isDragging = true;
       startY = e.clientY;
       startValue = self.value;
+      try { svg.setPointerCapture(e.pointerId); } catch(_) {}
       e.preventDefault();
     });
 
-    document.addEventListener('mousemove', (e) => {
+    svg.addEventListener('pointermove', (e) => {
       if (!isDragging) return;
       const delta = (startY - e.clientY) * 0.5;
       self.setValue(startValue + delta);
     });
 
-    document.addEventListener('mouseup', () => { isDragging = false; });
+    svg.addEventListener('pointerup', () => { isDragging = false; });
 
     return container;
   }

@@ -15,6 +15,7 @@ export class LfoComponent extends AudioComponent {
     this.rateKnob = null;
     this.depthKnob = null;
     this.element = this.createElement();
+    this.startLfo();
   }
 
   startLfo() {

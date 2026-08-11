@@ -1,11 +1,13 @@
 export class PatternSequencer {
-  constructor(ctx) {
+  constructor(ctx, opts = {}) {
     this.ctx = ctx;
     this.patterns = new Map();
     this.currentStep = 0;
-    this.steps = 16;
-    this.bpm = 120;
+    this.steps = opts.steps || 16;
+    this.bpm = opts.bpm || 120;
     this.isPlaying = false;
+    this.lookaheadMs = 25;
+    this.nextTime = 0;
     this.timer = null;
     this.onStep = null;
   }
@@ -17,30 +19,36 @@ export class PatternSequencer {
     });
   }
 
+  get stepDuration() {
+    return 60 / this.bpm / 4;
+  }
+
   start() {
     if (this.isPlaying) return;
     this.isPlaying = true;
-    this.currentStep = 0;
-    this._tick();
+    this.nextTime = this.ctx.currentTime + 0.1;
+    this.timer = setInterval(() => this._schedule(), this.lookaheadMs);
   }
 
   stop() {
     this.isPlaying = false;
     if (this.timer) {
-      clearTimeout(this.timer);
+      clearInterval(this.timer);
       this.timer = null;
     }
   }
 
-  _tick() {
+  _schedule() {
     if (!this.isPlaying) return;
-    const note = this.patterns.get(this.currentStep);
-    if (this.onStep) {
-      this.onStep(this.currentStep, note);
+    const horizon = this.ctx.currentTime + this.lookaheadMs / 1000;
+    const dur = this.stepDuration;
+    while (this.nextTime < horizon) {
+      const step = this.currentStep % this.steps;
+      const note = this.patterns.get(step);
+      if (this.onStep) this.onStep(step, note, this.nextTime, dur);
+      this.currentStep = (this.currentStep + 1) % this.steps;
+      this.nextTime += dur;
     }
-    this.currentStep = (this.currentStep + 1) % this.steps;
-    const interval = (60 / this.bpm / 4) * 1000;
-    this.timer = setTimeout(() => this._tick(), interval);
   }
 
   setBpm(bpm) {

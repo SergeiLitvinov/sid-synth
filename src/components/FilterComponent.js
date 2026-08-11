@@ -90,6 +90,10 @@ export class FilterComponent extends AudioComponent {
     if (oldNode) oldNode.disconnect();
   }
 
+  getModParam() {
+    return this.filterNode ? this.filterNode.frequency : null;
+  }
+
   dispose() {
     if (this.filterNode) {
       this.filterNode.disconnect();

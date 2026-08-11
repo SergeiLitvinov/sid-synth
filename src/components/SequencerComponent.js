@@ -63,8 +63,14 @@ export class SequencerComponent extends AudioComponent {
       step.onclick = () => {
         step.classList.toggle('active');
         if (step.classList.contains('active')) {
-          const n = prompt('Note (C,D,E,F,G,A,B or with #):', 'C');
-          if (n) { this.pattern[i] = n.toUpperCase(); step.textContent = n.charAt(0).toUpperCase(); }
+          const n = prompt('Note with octave (e.g. C3, E4, B2, F#3):', 'C3');
+          if (n && /^[A-G](#?)\d$/.test(n)) {
+            this.pattern[i] = n.toUpperCase();
+            step.textContent = n.toUpperCase();
+          } else {
+            if (n) alert('Invalid note. Use format: C3, F#3, B2 …');
+            step.classList.remove('active');
+          }
         } else { this.pattern[i] = null; step.textContent = i + 1; }
         this.seq.setPattern(this.pattern);
       };

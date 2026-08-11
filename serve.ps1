@@ -22,7 +22,7 @@ function Get-CdpErrors($port, $sec) {
 
 $port = 3000
 $dir = "C:\project\sid-synth"
-$proc = Start-Process "uv" -ArgumentList "run python -m http.server $port" -PassThru -WindowStyle Hidden
+$proc = Start-Process "uv" -ArgumentList "run python serve.py $dir $port" -WorkingDirectory $dir -PassThru -WindowStyle Hidden
 Start-Sleep 2
 
 if (!$proc.HasExited) {

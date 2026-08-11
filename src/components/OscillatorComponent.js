@@ -22,7 +22,10 @@ export class OscillatorComponent extends AudioComponent {
     this.isOn = true;
     this.outputGain = ctx.createGain();
     this.outputGain.gain.value = 0; // Start silent
+    this.inputGain = ctx.createGain();
+    this.inputGain.connect(this.outputGain);
     this.node = null;
+    this._lastWave = null;
     this.freqKnob = null;
     this.element = this.createElement();
     this.update();
@@ -63,6 +66,12 @@ export class OscillatorComponent extends AudioComponent {
     });
     body.appendChild(this.freqKnob.element);
 
+    const inp = document.createElement('div');
+    inp.className = 'conn-point conn-input';
+    inp.dataset.type = 'input';
+    inp.dataset.id = `osc${this.id}`;
+    el.appendChild(inp);
+
     const out = document.createElement('div');
     out.className = 'conn-point conn-output';
     out.dataset.type = 'output';
@@ -82,13 +91,30 @@ export class OscillatorComponent extends AudioComponent {
       this.outputGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
       return;
     }
-    if (this.node) {
-      try { this.node.stop(); } catch(e) {}
-      this.node.disconnect();
+    if (!this.node || this.waveform !== this._lastWave) {
+      if (this.node) {
+        try { this.node.stop(); } catch(e) {}
+        this.node.disconnect();
+      }
+      this.node = createOsc(this.waveform, this.ctx, this.frequency);
+      this.node.connect(this.outputGain);
+      this._lastWave = this.waveform;
+      try { this.node.start(); } catch(e) {}
+    } else {
+      this.setFrequency(this.frequency);
     }
-    this.node = createOsc(this.waveform, this.ctx, this.frequency);
-    this.node.connect(this.outputGain);
-    try { this.node.start(); } catch(e) {}
+    this.outputGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.02);
+  }
+
+  setFrequency(freq) {
+    this.frequency = freq;
+    if (this.node && this.node.frequency) {
+      this.node.frequency.setValueAtTime(freq, this.ctx.currentTime);
+    }
+  }
+
+  getModParam() {
+    return this.node && this.node.frequency ? this.node.frequency : null;
   }
 
   dispose() {
@@ -98,6 +124,7 @@ export class OscillatorComponent extends AudioComponent {
       this.node = null;
     }
     this.outputGain.disconnect();
+    this.inputGain.disconnect();
     this.isConnected = false;
   }
 }

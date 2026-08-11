@@ -8,11 +8,14 @@ A modular synthesizer inspired by the Commodore 64 SID chip, built with Web Audi
 
 - **Modular Architecture** - Drag-and-drop components onto the rack
 - **Patch Cable Routing** - Click-to-connect components with visual SVG cables
+- **Modulation Cables** - LFO → target connections are routed to an `AudioParam` (oscillator frequency, filter cutoff) and drawn in pink
+- **Splitter Channel Routing** - Per-channel outputs (`outChannel`) with channel-aware cable rendering
+- **Step Sequencer** - Pattern programming with octaves and lookahead scheduling
 - **3-Octave Keyboard** - C2 to B4 (36 keys) with mouse interaction
 - **Real-time Visualization** - Oscilloscope and spectrum analyzer
-- **Preset System** - Save, load, and delete custom presets
+- **Preset System** - Save, load, and delete custom presets; export/import patch JSON
 - **Multiple Oscillator Types** - Sine, square, triangle, sawtooth, noise
-- **Filter Types** - Lowpass, highpass, bandpass
+- **Filter Types** - Lowpass, highpass, bandpass, nonlinear
 - **ADSR Envelope** - Attack, decay, sustain, release controls
 - **Effects** - Delay and reverb
 - **Master Output** - Connect any component to master out
@@ -22,20 +25,20 @@ A modular synthesizer inspired by the Commodore 64 SID chip, built with Web Audi
 | Component | Description |
 |-----------|-------------|
 | **OSC** | Oscillator with waveform selection and frequency knob |
-| **FILTER** | 3-mode filter (LP/HP/BP) with frequency and Q controls |
+| **FILTER** | 3-mode filter (LP/HP/BP) plus nonlinear mode, with frequency and Q controls |
 | **ADSR** | Envelope generator with A/D/S/R knobs |
 | **EFFECTS** | Delay and reverb with toggle and parameter controls |
-| **LFO** | Low frequency oscillator for modulation |
+| **LFO** | Low frequency oscillator for modulation (pink cable = mod) |
 | **MIXER** | Mix multiple audio signals |
-| **SPLITTER** | Split audio signal to multiple destinations |
-| **SEQ** | Step sequencer |
+| **SPLITTER** | Split audio signal to multiple destinations with per-channel routing |
+| **SEQ** | Step sequencer with note/octave steps |
 
 ## Getting Started
 
 ### Prerequisites
 
 - Modern browser with Web Audio API support (Chrome, Firefox, Edge, Safari)
-- (Optional) Node.js for local server
+- Python 3 (for the dev server)
 
 ### Installation
 
@@ -47,17 +50,16 @@ cd sid-synth
 
 2. Serve the files using any HTTP server. For example:
 ```bash
-# Using Python
-python -m http.server 3000
-
-# Using Node.js http-server
-npx http-server -p 3000
-
-# Or use the included PowerShell script (Windows)
+# Included dev server (no-cache, Windows)
 .\serve.ps1
+
+# Or directly with Python (also no-cache)
+python serve.py . 3000
 ```
 
 3. Open your browser and navigate to `http://localhost:3000`
+
+> **Note:** the dev server sends `Cache-Control: no-store`. A plain `python -m http.server` sends no cache headers, so browsers apply heuristic caching based on file mtime (the git-checkout date) and can serve stale ES modules after edits.
 
 ## Usage
 
@@ -118,6 +120,8 @@ OSC → Filter → ADSR → Effects → Master Out → Speakers
 
 Components can be connected in any order. Use the **SPLITTER** to send signals to multiple destinations, or **MIXER** to combine multiple signals.
 
+**Modulation:** connect an **LFO** output to any input. LFO → target is detected as a modulation route and wired to the target's `AudioParam` (oscillator frequency / filter cutoff), not to the audio input. The cable is drawn in **pink**.
+
 ## Project Structure
 
 ```
@@ -125,6 +129,14 @@ sid-synth/
 ├── index.html              # Main HTML file
 ├── style.css               # Main styles
 ├── knob.css                # Knob component styles
+├── serve.py                # No-cache dev server (Cache-Control: no-store)
+├── serve.ps1               # PowerShell wrapper around serve.py (Windows)
+├── docs/                   # TODO.md (план/статус), CODING_STANDARDS.md
+├── tests/                  # Браузерные тесты без Node:
+│   ├── smoke.html/js       #   smoke на реальном AudioContext (10/10)
+│   ├── mock-test.html/js   #   unit-эквивалент на mockAudioContext (11/11)
+│   ├── mockAudioContext.js #   мок Web Audio API
+│   └── integration.js      #   E2E против живого приложения (13 шагов, Playwright)
 ├── src/
 │   ├── main.js             # Core logic, drag-drop, visualization
 │   ├── oscillator/         # Oscillator implementations
@@ -135,15 +147,25 @@ sid-synth/
 │   │   └── noise.js
 │   ├── filter/             # Filter implementations
 │   │   ├── index.js
-│   │   ├── lowpass.js
-│   │   ├── highpass.js
-│   │   └── bandpass.js
+│   │   ├── lp.js
+│   │   ├── hp.js
+│   │   ├── bp.js
+│   │   └── nonlinear.js
 │   ├── envelope/           # ADSR envelope
 │   │   └── adshr.js
+│   ├── modulator/          # Modulators
+│   │   ├── index.js
+│   │   ├── lfo.js
+│   │   ├── pwm.js
+│   │   ├── ring_mod.js
+│   │   └── hard_sync.js
+│   ├── sequencer/          # Sequencer core
+│   │   └── pattern.js
 │   ├── effects/            # Audio effects
 │   │   ├── delay.js
 │   │   └── reverb.js
 │   └── components/         # UI components
+│       ├── index.js            # Barrel export
 │       ├── AudioComponent.js   # Base class
 │       ├── OscillatorComponent.js
 │       ├── FilterComponent.js
@@ -153,8 +175,8 @@ sid-synth/
 │       ├── MixerComponent.js
 │       ├── SplitterComponent.js
 │       ├── SequencerComponent.js
-│       └── Knob.js           # Reusable knob control
-└── serve.ps1              # PowerShell serve script (Windows)
+│       └── Knob.js             # Reusable knob control
+└── LICENSE
 ```
 
 ## Technologies
@@ -182,15 +204,11 @@ sid-synth/
 
 ## Future Enhancements
 
-- [ ] MIDI input support
-- [ ] More oscillator types (PWM, ring mod)
+- [ ] Full polyphony (per-voice ADSR) — currently mono last-note retrigger
+- [ ] More oscillator types (PWM, ring mod UI)
 - [ ] More filter types (notch, allpass)
-- [ ] Sequencer with pattern programming
 - [ ] Waveform visualization on each component
-- [ ] Polyphonic support
-- [ ] Patch cable color coding
 - [ ] Component minimization/expansion
-- [ ] Export/import complete synth state
 
 ## License
 
