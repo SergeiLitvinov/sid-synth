@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'sidSynthPresets';
 
-export function createPatchStore({ components, captureParams, applyParams, createComponent, clearRack, drawConnections }) {
+export function createPatchStore({ components, captureParams, applyParams, createComponent, clearRack, drawConnections, connections, addConnection }) {
   function getAllPresets() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
     catch (e) { return {}; }
@@ -21,12 +21,23 @@ export function createPatchStore({ components, captureParams, applyParams, creat
   function savePreset() {
     const name = prompt('Preset name:', 'my-preset');
     if (!name) return;
+    const ids = Object.keys(components);
+    const indexOf = {};
+    ids.forEach((id, i) => indexOf[id] = i);
     const presets = getAllPresets();
     presets[name] = {
-      components: Object.keys(components).map(id => ({
+      components: ids.map(id => ({
         type: components[id].type,
+        x: parseInt(components[id].element.style.left) || 0,
+        y: parseInt(components[id].element.style.top) || 0,
         params: captureParams(components[id])
-      }))
+      })),
+      connections: (connections || []).map(c => ({
+        from: indexOf[c.from],
+        to: c.to === 'master' ? 'master' : indexOf[c.to],
+        toChannel: c.toChannel ?? null,
+        outChannel: c.outChannel ?? 0
+      })).filter(c => c.from !== undefined && (c.to === 'master' || c.to !== undefined))
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
     refreshPresetList();
@@ -38,11 +49,23 @@ export function createPatchStore({ components, captureParams, applyParams, creat
     const preset = presets[name];
     if (!preset || !preset.components) return;
     clearRack();
-    preset.components.forEach(({ type, params }) => {
-      createComponent(type, '', 40, 40);
+    const idMap = {};
+    preset.components.forEach((comp, i) => {
+      createComponent(comp.type, '', 0, 0);
       const ids = Object.keys(components);
       const id = ids[ids.length - 1];
-      if (components[id]) applyParams(components[id], params);
+      idMap[i] = id;
+      const c = components[id];
+      if (c) {
+        c.element.style.left = (comp.x || 0) + 'px';
+        c.element.style.top = (comp.y || 0) + 'px';
+        applyParams(c, comp.params);
+      }
+    });
+    (preset.connections || []).forEach(conn => {
+      const from = idMap[conn.from];
+      const to = conn.to === 'master' ? 'master' : idMap[conn.to];
+      if (from && to) addConnection(from, to, conn.toChannel ?? null, conn.outChannel ?? 0);
     });
     drawConnections();
   }

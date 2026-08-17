@@ -12,6 +12,17 @@ A modular synthesizer inspired by the Commodore 64 SID chip, built with Web Audi
 - **Splitter Channel Routing** - Per-channel outputs (`outChannel`) with channel-aware cable rendering
 - **Step Sequencer** - Pattern programming with octaves and lookahead scheduling
 - **3-Octave Keyboard** - C2 to B4 (36 keys) with mouse interaction
+- **Recorder Panel** - Multi-track loop recorder (16-step grid + realtime capture) with per-voice ADSR engine
+- **Arranger Canvas** - Timeline with bar ruler, track lanes (16-step pattern blocks), playhead, and zoom/scroll
+- **MIDI Clips** - Clips on the timeline: add to the active track at the next free position, click to select, Ctrl+click for multi-select, Shift+click for range select, drag to move (grid-snapped; dragging a group moves it together), trim by dragging either edge, split (S) at the playhead, duplicate (D), loop 3x (L), Delete to remove all selected — all undoable via command history; the loop clip (start 0) carries the track's grid/realtime notes and renders them as mini-notes inside the clip
+- **Markers** - Timeline markers: add at the playhead (`+ mrk`, auto-named M1/M2/…), rendered as flags on the ruler, click to seek the transport to the marker's position, remove with × — all undoable; markers persist in the project snapshot (`project.markers`) across reload
+- **Track Mute/Solo** - Per-track M/S buttons in the recorder rows and in the arranger track headers; a muted track is silent, a soloed track isolates the others (engine `isAudible`); both run as undoable commands and the flags persist in the project snapshot (`track.muted`/`track.solo`) across reload
+- **Track Rename** - Double-click a track name in a recorder row or an arranger lane label to rename it inline (Enter commits, Esc cancels); rename is an undoable command via history
+- **Track Reorder** - ▲/▼ buttons in the recorder rows and arranger lane headers move a track up/down; reorder is an undoable command and the track order persists in the project snapshot across reload
+- **Track Color** - A color input in each recorder row and arranger lane header sets the track accent (rows, grid labels, lane labels, clips); a color change is an undoable command and persists across reload
+- **Input Monitor** - Per-track MNT buttons in the recorder rows and arranger lane headers toggle input monitoring (whether live notes are heard on the track); undoable and persisted
+- **Lane Resize** - Drag the bottom edge of any arranger lane to change its height; the new height is an undoable command and persists across reload
+- **Track Folders / Collapse** - Any track can be a folder (tracks reference it via `folder`); collapse toggles in recorder rows and arranger lane headers hide the lane/grid content or a folder's children, undoable and persisted
 - **Real-time Visualization** - Oscilloscope and spectrum analyzer
 - **Preset System** - Save, load, and delete custom presets; export/import patch JSON
 - **Multiple Oscillator Types** - Sine, square, triangle, sawtooth, noise
@@ -38,7 +49,7 @@ A modular synthesizer inspired by the Commodore 64 SID chip, built with Web Audi
 ### Prerequisites
 
 - Modern browser with Web Audio API support (Chrome, Firefox, Edge, Safari)
-- Python 3 (for the dev server)
+- Python 3 (for the dev server) **or** PowerShell 7+ (for the Python-free server)
 
 ### Installation
 
@@ -55,9 +66,12 @@ cd sid-synth
 
 # Or directly with Python (also no-cache)
 python serve.py . 3000
+
+# Or without Python at all (PS7-only, no-cache, port 3100)
+pwsh -File tests/serve-ps.ps1
 ```
 
-3. Open your browser and navigate to `http://localhost:3000`
+3. Open your browser and navigate to `http://localhost:3000` (or `http://127.0.0.1:3100` with `serve-ps.ps1`)
 
 > **Note:** the dev server sends `Cache-Control: no-store`. A plain `python -m http.server` sends no cache headers, so browsers apply heuristic caching based on file mtime (the git-checkout date) and can serve stale ES modules after edits.
 
@@ -100,6 +114,12 @@ Click any preset button to instantly configure your synth:
 - **SAVE PATCH** - Export patch configuration as JSON
 - **LOAD PATCH** - Import patch configuration from JSON
 
+### Recorder Panel
+1. **REC** starts looped recording (auto-arms the active track); **PLAY** toggles the transport; **STOP** ends the loop and commits captured notes.
+2. Click grid cells to program the 16-step pattern. Each cell stores its own **pitch and duration**: click to toggle the note on/off (it becomes selected), then the track row's *note* and *length* fields edit exactly that step (`A3·4` = A3 for 4 steps). With no cell selected, those same fields set the track defaults for new notes.
+3. Each track has its own wave, filter, and ADSR — overlapping notes get independent voices (per-voice envelopes).
+4. The whole project (rack + tracks + tempo + active track) persists to one versioned `localStorage` snapshot (`sidSynthProject`); old `sidSynthAutosave`/`sidSynthTracks` keys migrate automatically on first load.
+
 ## Keyboard Controls
 
 | Range | Notes |
@@ -135,11 +155,41 @@ sid-synth/
 ├── tests/                  # Браузерные тесты без Node:
 │   ├── smoke.html/js       #   smoke на реальном AudioContext (10/10)
 │   ├── mock-test.html/js   #   unit-эквивалент на mockAudioContext (11/11)
+│   ├── track-test.html/js  #   трек-движок/рекордер + folder/collapse (52/52)
+│   ├── project-test.html/js#   versioned project serialize/migrate round-trip + markers + mute/solo + folders (33/33)
+│   ├── history-test.html/js #   undo/redo + track commands (28/28)
+│   ├── recorderUI-test.html/js # recorder panel wiring through history (21/21)
+│   ├── musicalTime-test.html/js # PPQ / tempo map / time signature (26/26)
+│   ├── transport-test.html/js # unified transport + step engine adapter + seek (26/26)
+│   ├── projectStore-test.html/js # unified project snapshot + legacy migration (11/11)
+│   ├── arranger-test.html/js #   arranger layout + clips + mini-notes + trim/split/dup/loop + multi-select + markers + mute/solo + rename + reorder + color + monitor + resize + folder/collapse UI (110/110)
+│   ├── clipEvents-test.html/js # grid/rt ↔ clip events conversions (17/17)
 │   ├── mockAudioContext.js #   мок Web Audio API
-│   └── integration.js      #   E2E против живого приложения (13 шагов, Playwright)
+│   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)
+│   └── integration.js      #   E2E против живого приложения (111 шагов, Playwright)
 ├── src/
 │   ├── main.js             # Core logic, drag-drop, visualization
-│   ├── oscillator/         # Oscillator implementations
+│   ├── services/            # Services (router, presets, keyboard, MIDI, etc.)
+│   ├── tracks/              # Multi-track recorder engine
+│   │   ├── trackEngine.js   #   loop scheduler, transport, grid+rt recording
+│   │   ├── stepEngineAdapter.js # drives trackEngine from the unified transport
+│   │   ├── voiceEngine.js   #   per-track polyphonic voice bank (ADSR)
+│   │   └── recorderUI.js    #   recorder panel UI
+│   ├── project/             # Versioned project document (web-DAW foundation)
+│   │   ├── defaultProject.js#   schema factory: id/name/tempo, empty rack+tracks
+│   │   ├── serialize.js     #   serializeProject / parseProject / validate / roundTrip
+│   │   ├── migrate.js       #   migrateProject + fromLegacy (старые localStorage keys)
+│   │   ├── projectStore.js  #   unified snapshot (rack+tracks+tempo) + legacy migration
+│   │   ├── history.js       #   undo/redo command history (dirty flag, markSaved)
+│   │   ├── trackCommands.js #   add/remove/update/clear/grid track + clip move/remove commands
+│   │   ├── musicalTime.js   #   PPQ ticks ↔ bar/beat/tick conversion
+│   │   ├── clipEvents.js    #   grid/rt ↔ clip events conversions (PPQ ticks)
+│   │   ├── tempoMap.js      #   tempo + time-signature events, ticks ↔ seconds
+│   │   └── transport.js     #   unified PPQ transport: clock, lookahead, play/record
+│   ├── arranger/            # Linear timeline (DAW arranger canvas)
+│   │   ├── arrangerLayout.js #   pure geometry: ticks↔px, ruler, pattern/clip layout, snap
+│   │   └── arranger.js      #   createArranger UI: ruler, lanes, playhead, zoom, clips
+│   ├── oscillator/          # Oscillator implementations
 │   │   ├── index.js
 │   │   ├── sine.js
 │   │   ├── square.js
@@ -202,13 +252,11 @@ sid-synth/
 - Some components may produce no sound if not connected to master output
 - MIDI support is experimental
 
-## Future Enhancements
+## Roadmap: from SID Synth to web DAW
 
-- [ ] Full polyphony (per-voice ADSR) — currently mono last-note retrigger
-- [ ] More oscillator types (PWM, ring mod UI)
-- [ ] More filter types (notch, allpass)
-- [ ] Waveform visualization on each component
-- [ ] Component minimization/expansion
+The current application is a modular SID-inspired synthesizer with a 16-step multi-track loop recorder. The long-term goal is a complete browser DAW: linear arrangement, MIDI and audio clips, piano roll, recording, mixer/buses/sends, automation, project recovery, and WAV/stem export — while keeping the SID rack as its signature instrument and visual language.
+
+The audited, prioritized roadmap and definition of done live in [`docs/TODO.md`](docs/TODO.md). Foundation work delivered: a unified versioned project model (`src/project/`, one `sidSynthProject` snapshot with legacy-key migration), undo/redo command history, musical-time/tempo map, a single transport shared by the rack and recorder (including seek), a minimal arranger canvas (ruler, track lanes, playhead, zoom), and a MIDI clip model where clips render on the timeline and the loop clip carries the track's grid/realtime notes as mini-notes. Clip editing is in place: select, multi-select (Ctrl+click) and range select (Shift+click), drag-move with snap (groups move together), edge-trim, split (S), duplicate (D), loop (L), and delete — all undoable. Timeline markers are in: add at the playhead, seek by clicking, remove with ×, undoable, persisted in the project snapshot. Track mute/solo is in: M/S buttons in recorder rows and arranger track headers, engine-level audibility, undoable and persisted. Track rename is in: double-click a track name or lane label to rename inline, undoable via history. Track reorder is in: ▲/▼ buttons in recorder rows and arranger lane headers, undoable, order persisted across reload. Track color is in: color inputs in recorder rows and arranger lane headers, undoable, persisted across reload. Input monitor is in: MNT buttons in recorder rows and arranger lane headers, undoable, persisted across reload. Lane resize is in: drag the bottom edge of any arranger lane, undoable, height persisted across reload. Track folders/collapse is in: collapse toggles in recorder rows and lane headers, folders hide their children, undoable, persisted across reload. Next: arrange a full song from multiple clips.
 
 ## License
 

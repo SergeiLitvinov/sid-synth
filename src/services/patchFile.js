@@ -30,10 +30,14 @@ export function createPatchFile({ components, connections, captureParams, create
         patch.components.forEach(c => {
           const createId = (c.type === 'oscillator' && c.params && c.params.n) ? 'osc' + c.params.n : c.id;
           const before = new Set(Object.keys(components));
-          createComponent(c.type, createId, c.x, c.y);
+          createComponent(c.type, createId, 0, 0);
           const createdId = Object.keys(components).find(id => !before.has(id));
           idMap[c.id] = createdId;
-          if (createdId && components[createdId]) applyParams(components[createdId], c.params);
+          if (createdId && components[createdId]) {
+            components[createdId].element.style.left = (c.x || 0) + 'px';
+            components[createdId].element.style.top = (c.y || 0) + 'px';
+            applyParams(components[createdId], c.params);
+          }
         });
         (patch.connections || []).forEach(conn => {
           const channel = conn.toChannel !== undefined && conn.toChannel !== null ? conn.toChannel : null;

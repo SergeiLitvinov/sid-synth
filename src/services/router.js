@@ -296,6 +296,19 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
       }
     });
 
+    rack.addEventListener('click', e => {
+      if (e.target !== rack) return;
+      if (currentConnectionFrom) {
+        currentConnectionFrom.port.style.background = '';
+        currentConnectionFrom = null;
+        if (tempLine) { tempLine.remove(); tempLine = null; }
+      }
+      if (selectedConnection !== null) {
+        selectedConnection = null;
+        drawConnections();
+      }
+    });
+
     initPortClicks();
   }
 

@@ -57,9 +57,19 @@
 ## Проверка перед сдачей
 
 - Без внешних зависимостей и Node — проект не требует `node_modules`/npm.
-- Браузерные тесты: `.\serve.ps1` → `http://localhost:3000/tests/smoke.html` (10/10) и
-  `http://localhost:3000/tests/mock-test.html` (11/11) — без FAIL.
-- E2E: `tests/integration.js` (13 шагов) гоняется браузерным харнессом (Playwright MCP)
-  против живого приложения `http://127.0.0.1:3000` — без FAIL.
-- Ручной smoke-тест: `.\serve.ps1` → сервер на `http://localhost:3000`, проверить
-  создание компонента, соединение к MASTER OUT, звук клавишей, сохранение/загрузку патча.
+- Сервер: `.\serve.ps1` (порт 3000, через `serve.py`) или `pwsh -File tests/serve-ps.ps1` (порт 3100, только PS7) — оба без кэша.
+- Браузерные тесты: `.\serve.ps1` → `http://localhost:3000/tests/smoke.html` (10/10),
+  `http://localhost:3000/tests/mock-test.html` (11/11),
+  `http://localhost:3000/tests/track-test.html` (52/52),
+  `http://localhost:3000/tests/project-test.html` (33/33),
+  `http://localhost:3000/tests/history-test.html` (28/28),
+  `http://localhost:3000/tests/recorderUI-test.html` (21/21),
+  `http://localhost:3000/tests/musicalTime-test.html` (26/26),
+  `http://localhost:3000/tests/transport-test.html` (26/26),
+  `http://localhost:3000/tests/projectStore-test.html` (11/11, async debounce-тест требует Playwright/ожидания),
+  `http://localhost:3000/tests/clipEvents-test.html` (17/17) и
+  `http://localhost:3000/tests/arranger-test.html` (110/110) — без FAIL (итого 345/345).
+- E2E: `tests/integration.js` (111 шагов) гоняется браузерным харнессом (Playwright MCP)
+  против живого приложения (порт 3000 или 3100) — без FAIL.
+- Ручной smoke-тест: сервер (3000/3100) → проверить создание компонента, соединение
+  к MASTER OUT, звук клавишей, сохранение/загрузку патча.

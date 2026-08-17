@@ -15,6 +15,16 @@ import { initMidi } from './services/midi.js';
 import { createRouter } from './services/router.js';
 import { createPatchStore } from './services/patchStore.js';
 import { createPatchFile } from './services/patchFile.js';
+import { createTrackEngine } from './tracks/trackEngine.js';
+import { createStepEngineAdapter } from './tracks/stepEngineAdapter.js';
+import { createRecorderUI } from './tracks/recorderUI.js';
+import { createArranger } from './arranger/arranger.js';
+import { createHistory } from './project/history.js';
+import { createTransport } from './project/transport.js';
+import { createProjectStore } from './project/projectStore.js';
+import { serializeProject } from './project/serialize.js';
+import { createProjectId } from './project/defaultProject.js';
+import { createMarkerStore } from './project/markers.js';
 
 console.log('SID Synth Modular loaded');
 
@@ -154,7 +164,7 @@ console.log('SID Synth Modular loaded');
     let startX = 0, startY = 0;
 
     el.addEventListener('pointerdown', e => {
-      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg') || e.target.classList.contains('close-btn')) return;
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg') || e.target.closest('.conn-point') || e.target.classList.contains('close-btn')) return;
       isDragging = true;
       try { el.setPointerCapture(e.pointerId); } catch(_) {}
       const rect = el.getBoundingClientRect();
@@ -261,16 +271,15 @@ console.log('SID Synth Modular loaded');
     document.getElementById('noteDisplay').textContent = noteName;
   }
 
-  function findComponentByType(type) {
-    return Object.keys(components).find(id => components[id].type === type);
-  }
-
   // Musical keyboard + MIDI
+  let recNoteOn = null, recNoteOff = null;
   createKeyboard({
     container: document.getElementById('keyboard'),
     ctx,
     playNote,
     stopAll,
+    onNoteOn: (n) => { if (recNoteOn) recNoteOn(n); },
+    onNoteOff: (n) => { if (recNoteOff) recNoteOff(n); },
   });
 
   router.init();
@@ -282,18 +291,14 @@ console.log('SID Synth Modular loaded');
         const p = PRESETS[b.dataset.preset];
         if (!p) return;
 
-        if (p.osc1) {
-          const oscId = findComponentByType('oscillator');
-          if (oscId && components[oscId]) applyParams(components[oscId], p.osc1);
-        }
-        if (p.filter) {
-          const filterId = findComponentByType('filter');
-          if (filterId && components[filterId]) applyParams(components[filterId], p.filter);
-        }
-        if (p.adsr) {
-          const adsrId = findComponentByType('adsr');
-          if (adsrId && components[adsrId]) applyParams(components[adsrId], p.adsr);
-        }
+        const applyToAll = (type, params) => {
+          Object.keys(components).forEach(id => {
+            if (components[id].type === type) applyParams(components[id], params);
+          });
+        };
+        if (p.osc1) applyToAll('oscillator', p.osc1);
+        if (p.filter) applyToAll('filter', p.filter);
+        if (p.adsr) applyToAll('adsr', p.adsr);
       });
     }
   });
@@ -317,6 +322,8 @@ console.log('SID Synth Modular loaded');
     createComponent,
     clearRack,
     drawConnections: router.drawConnections,
+    connections: router.connections,
+    addConnection: router.addConnection,
   });
 
   const patchFile = createPatchFile({
@@ -358,4 +365,126 @@ console.log('SID Synth Modular loaded');
     playNote,
     stopAll,
   });
+
+  // Recorder: multi-track loop sequencer + realtime recording.
+  // Keyboard presses feed recorder noteOn/noteOff while armed tracks capture them.
+  const recorderCtx = ctx;
+  const recorderDest = ctx.createGain();
+  recorderDest.gain.value = 0.7;
+  recorderDest.connect(masterGain);
+
+  const trackEngine = createTrackEngine(recorderCtx, recorderDest);
+  const recorderEl = document.getElementById('recorder');
+  const history = createHistory();
+  const transport = createTransport({ ctx: recorderCtx, bpm: trackEngine.bpm });
+  createStepEngineAdapter(trackEngine, transport);
+  const recorderUI = recorderEl
+    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history })
+    : null;
+
+  // Linear arranger: ruler + track lanes + playhead on the unified transport.
+  const arrangerEl = document.getElementById('arranger');
+  const markers = createMarkerStore();
+  const arranger = arrangerEl
+    ? createArranger({ container: arrangerEl, engine: trackEngine, transport, history, markers })
+    : null;
+
+  // Start with one default track so the panel is usable immediately.
+  trackEngine.addTrack({ name: 'Track 1', id: 'trk_1' });
+  trackEngine.activeTrackId = 'trk_1';
+  if (recorderUI) recorderUI.renderAll();
+  if (arranger) arranger.render();
+
+  // Keyboard: Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo (recorder edits).
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !history) return;
+    const k = (e.key || '').toLowerCase();
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); history.undo(); }
+    else if (k === 'z' && e.shiftKey) { e.preventDefault(); history.redo(); }
+    else if (k === 'y') { e.preventDefault(); history.redo(); }
+  });
+
+  // Route keyboard presses into the recorder engine (monitor + record).
+  recNoteOn = (n) => trackEngine.noteOn(resolveNote(n) || n);
+  recNoteOff = (n) => trackEngine.noteOff(resolveNote(n) || n);
+
+  // Unified project persistence: one versioned snapshot (rack + tracks + tempo).
+  let projectId = null;
+  let projectName = 'SID Project';
+
+  function captureProject() {
+    if (!projectId) projectId = createProjectId();
+    return serializeProject({
+      components,
+      connections: router.connections,
+      captureParams,
+      tracks: trackEngine.getTracks(),
+      tempo: trackEngine.bpm,
+      activeTrackId: trackEngine.activeTrackId,
+      markers: markers.getMarkers(),
+      id: projectId,
+      name: projectName,
+    });
+  }
+
+  function applyProject(project) {
+    if (project.id) projectId = project.id;
+    if (project.name) projectName = project.name;
+
+    // Rack: rebuild components + connections from the snapshot.
+    clearRack();
+    const idMap = {};
+    (project.rack.components || []).forEach(c => {
+      const before = new Set(Object.keys(components));
+      const createId = (c.type === 'oscillator' && c.params && c.params.n) ? 'osc' + c.params.n : c.id;
+      createComponent(c.type, createId, 0, 0);
+      const createdId = Object.keys(components).find(id => !before.has(id));
+      idMap[c.id] = createdId;
+      if (createdId && components[createdId]) {
+        components[createdId].element.style.left = (c.x || 0) + 'px';
+        components[createdId].element.style.top = (c.y || 0) + 'px';
+        applyParams(components[createdId], c.params);
+      }
+    });
+    (project.rack.connections || []).forEach(conn => {
+      const from = idMap[conn.from] ?? conn.from;
+      const to = conn.to === 'master' ? 'master' : (idMap[conn.to] ?? conn.to);
+      router.addConnection(from, to, conn.toChannel ?? null, conn.outChannel ?? 0);
+    });
+    router.drawConnections();
+
+    // Tracks: replace the track set (keeps the default track when empty).
+    if (Array.isArray(project.tracks) && project.tracks.length) {
+      trackEngine.tracks.forEach(t => { try { t.voice.dispose(); } catch (e) {} });
+      trackEngine.tracks.length = 0;
+      trackEngine.byId = {};
+      project.tracks.forEach(d => trackEngine.addTrack(d));
+      if (project.tempo) { trackEngine.bpm = project.tempo; trackEngine.recalcTempo(); }
+      trackEngine.activeTrackId = project.activeTrackId || (trackEngine.tracks[0] && trackEngine.tracks[0].id);
+    }
+    if (recorderUI) recorderUI.renderAll();
+    markers.set(Array.isArray(project.markers) ? project.markers : []);
+    if (arranger) arranger.render();
+  }
+
+  const projectStore = createProjectStore({
+    capture: captureProject,
+    apply: applyProject,
+  });
+
+  // Trigger a save on rack DOM mutations, rack param changes, and history
+  // changes (undo/redo/commands). A 3s safety interval covers anything missed.
+  new MutationObserver(() => projectStore.markDirty()).observe(rack, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+  });
+  rack.addEventListener('change', () => projectStore.markDirty());
+  history.subscribe(() => projectStore.markDirty());
+
+  projectStore.restore();
+  if (recorderUI) recorderUI.renderAll();
+  if (arranger) arranger.render();
+  router.drawConnections();
+  setInterval(() => projectStore.markDirty(), 3000);
 })();

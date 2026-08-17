@@ -33,7 +33,11 @@ export function applyParams(comp, params) {
         comp.frequency = params.freq;
         if (comp.freqKnob) comp.freqKnob.setValue(params.freq);
       }
-      if (params.on !== undefined) comp.isOn = params.on;
+      if (params.on !== undefined) {
+        comp.isOn = params.on;
+        const chk = comp.element.querySelector('.param-row input[type="checkbox"]');
+        if (chk) chk.checked = params.on;
+      }
       comp.update();
       break;
     case 'filter':
