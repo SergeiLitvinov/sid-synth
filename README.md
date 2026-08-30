@@ -158,7 +158,7 @@ sid-synth/
 ├── tests/                  # Браузерные тесты без Node:
 │   ├── smoke.html/js       #   smoke на реальном AudioContext (10/10)
 │   ├── mock-test.html/js   #   unit-эквивалент на mockAudioContext (11/11)
-│   ├── track-test.html/js  #   трек-движок/рекордер + folder/collapse + full-song clips + setClipEvents + inserts/device chain + audition when + record mode/quantize + chaseToTick + midiChannel routing (102/102)
+│   ├── track-test.html/js  #   трек-движок/рекордер + folder/collapse + full-song clips + setClipEvents + inserts/device chain + audition when + record mode/quantize + chaseToTick + midiChannel routing + pitch bend/mod/sustain (112/112)
 │   ├── project-test.html/js#   versioned project serialize/migrate round-trip + markers + mute/solo + folders + inserts + midiChannel (38/38)
 │   ├── history-test.html/js #   undo/redo + track commands (28/28)
 │   ├── recorderUI-test.html/js # recorder panel wiring through history + INS insert editor (27/27)

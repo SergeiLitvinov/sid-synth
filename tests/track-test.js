@@ -1052,6 +1052,104 @@ check('noteOff routes to active track voice when no armed tracks', () => {
   return d.spy.length === 1 && d.spy[0].note === 'C4';
 });
 
+// --- Pitch bend / modulation / sustain (backlog #174) ---
+check('voice.pitchBend shifts oscillator frequency up', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  const beforeFreq = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  v.pitchBend(1.0); // +2 semitones
+  const afterFreq = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  return beforeFreq !== undefined && afterFreq > beforeFreq;
+});
+check('voice.pitchBend shifts oscillator frequency down', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  const beforeFreq = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  v.pitchBend(-1.0); // -2 semitones
+  const afterFreq = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  return beforeFreq !== undefined && afterFreq < beforeFreq;
+});
+check('voice.pitchBend zero restores base frequency', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  const baseFreq = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  v.pitchBend(1.0);
+  v.pitchBend(0);
+  const restored = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  return Math.abs(restored - baseFreq) < 1;
+});
+check('voice.noteOn applies current pitch bend', () => {
+  const d = makeFixture(120);
+  const v = d.track.voice;
+  v.pitchBend(1.0);
+  d.engine.noteOn('C4');
+  const freq = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  const baseFreq = 261.63; // C4
+  // +2 semitones = baseFreq * 2^(2/12) ≈ baseFreq * 1.1225
+  return freq > baseFreq * 1.1;
+});
+check('voice.sustain holds noteOff', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  v.sustain(true);
+  d.engine.noteOff('C4');
+  // Voice should still be active (sustain held)
+  const active = v.voices.find(x => x.activeNote === 'C4');
+  return !!active && active._sustainHeld === true;
+});
+check('voice.sustain release frees held voices', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  v.sustain(true);
+  d.engine.noteOff('C4');
+  v.sustain(false);
+  // After sustain release, voice should no longer be active
+  const held = v.voices.find(x => x.activeNote === 'C4' && x._sustainHeld);
+  return !held;
+});
+check('voice.modulation adjusts filter frequency', () => {
+  const d = makeFixture(120);
+  d.engine.updateTrack('trk_a', { filterType: 'lowpass', filterFreq: 1200 });
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  v.modulation(1.0);
+  // Filter freq should now be higher (towards 20000)
+  const filterFreq = v.voices.find(x => x.activeNote === 'C4')?.filter?.frequency?.value;
+  return filterFreq > 1200;
+});
+check('engine.routeCC routes CC1 to modulation on matching tracks', () => {
+  const d = makeFixture(120);
+  d.engine.updateTrack('trk_a', { filterType: 'lowpass', filterFreq: 1200 });
+  d.engine.noteOn('C4');
+  d.engine.routeCC(null, 1, 127); // CC1, all channels
+  const v = d.track.voice;
+  const freq = v.voices.find(x => x.activeNote === 'C4')?.filter?.frequency?.value;
+  return freq > 1200;
+});
+check('engine.routeCC routes CC64 to sustain on matching tracks', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  d.engine.routeCC(null, 64, 127); // CC64 on
+  d.engine.noteOff('C4');
+  const v = d.track.voice;
+  const held = v.voices.find(x => x.activeNote === 'C4' && x._sustainHeld);
+  return !!held;
+});
+check('engine.routePitchBend routes to matching tracks', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  const before = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  d.engine.routePitchBend(null, 0.5);
+  const after = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
+  return after > before;
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';

@@ -1,36 +1,62 @@
 import { noteForMidi } from './notes.js';
 
-// MIDI input service with device selection and per-track channel routing.
+// MIDI input service with device selection, per-track channel routing,
+// and CC/pitch bend/modulation/sustain support (backlog #174).
 //
 // Returns an API object with:
-//   selectDevice(id) — connect to a specific MIDI input (null = all)
+//   selectDevice(id)  — connect to a specific MIDI input (null = all)
 //   refreshInputs()   — re-enumerate available MIDI devices
-//   setTrackChannels(fn) — fn(trackId) => channel (1-16) | null (omni)
+//   getInputs()       — list available devices
+//   setCallbacks(obj) — { onNoteOn, onNoteOff, onCC, onPitchBend }
 //   destroy()         — disconnect all handlers
 //
-// Calls `onNoteOn(noteName)` and `onNoteOff(noteName)` for incoming notes
-// that pass the channel filter.
-export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff }) {
+// CC callback: onCC(channel, cc, value) — cc is 0-127, value 0-127
+// Pitch bend: onPitchBend(channel, value) — value is -1.0..1.0
+export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onPitchBend }) {
   let midiAccess = null;
   let selectedDeviceId = null;
-  let getTrackChannels = null; // fn(trackId) => channel | null
   let onNoteOnCb = onNoteOn || (() => {});
   let onNoteOffCb = onNoteOff || (() => {});
+  let onCCCb = onCC || (() => {});
+  let onPitchBendCb = onPitchBend || (() => {});
 
   function handleMessage(msg) {
-    const [cmd, note, vel] = msg.data;
-    const channel = (msg.data[0] & 0x0F) + 1; // 1-based
-    const isNoteOn = (cmd & 0xF0) === 0x90 && vel > 0;
-    const isNoteOff = (cmd & 0xF0) === 0x80 || ((cmd & 0xF0) === 0x90 && vel === 0);
-    if (!isNoteOn && !isNoteOff) return;
-
-    const noteName = noteForMidi(note);
-    if (!noteName) return;
+    const [cmd, data1, data2] = msg.data;
+    const channel = (cmd & 0x0F) + 1; // 1-based
+    const status = cmd & 0xF0;
 
     if (ctx.state === 'suspended') ctx.resume();
 
-    if (isNoteOn) onNoteOnCb(noteName, channel);
-    else onNoteOffCb(noteName, channel);
+    // Note on
+    if (status === 0x90 && data2 > 0) {
+      const noteName = noteForMidi(data1);
+      if (noteName) onNoteOnCb(noteName, channel, data2);
+      return;
+    }
+    // Note off (0x80, or 0x90 with vel 0)
+    if (status === 0x80 || (status === 0x90 && data2 === 0)) {
+      const noteName = noteForMidi(data1);
+      if (noteName) onNoteOffCb(noteName, channel);
+      return;
+    }
+    // Control Change (CC)
+    if (status === 0xB0) {
+      onCCCb(channel, data1, data2);
+      return;
+    }
+    // Pitch bend (14-bit: LSB = data1, MSB = data2)
+    if (status === 0xE0) {
+      const raw = (data2 << 7) | data1; // 0..16383
+      const value = (raw - 8192) / 8192; // -1.0..1.0
+      onPitchBendCb(channel, value);
+      return;
+    }
+    // Channel pressure (aftertouch)
+    if (status === 0xD0) {
+      // Treat as modulation-like expression; CC 1 equivalent
+      onCCCb(channel, 1, data1);
+      return;
+    }
   }
 
   function connectInput(input) {
@@ -106,8 +132,12 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff }) {
       return getInputs();
     },
     getInputs,
-    setTrackChannels(fn) { getTrackChannels = fn; },
-    setCallbacks(on, off) { if (on) onNoteOnCb = on; if (off) onNoteOffCb = off; },
+    setCallbacks(cbs) {
+      if (cbs.onNoteOn) onNoteOnCb = cbs.onNoteOn;
+      if (cbs.onNoteOff) onNoteOffCb = cbs.onNoteOff;
+      if (cbs.onCC) onCCCb = cbs.onCC;
+      if (cbs.onPitchBend) onPitchBendCb = cbs.onPitchBend;
+    },
     destroy() {
       if (midiAccess) midiAccess.inputs.forEach(disconnectInput);
     },

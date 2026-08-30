@@ -618,6 +618,26 @@ export function createTrackEngine(ctx, dest, config = {}) {
     });
   };
 
+  // ---- CC / pitch bend routing (backlog #174) ----------------------------
+  // Route MIDI CC to matching tracks (by midiChannel).
+  engine.routeCC = (channel, cc, value) => {
+    const tracks = engine.tracks;
+    const matching = tracks.filter(t => t.midiChannel === null || t.midiChannel === channel);
+    const norm = value / 127; // 0..1
+    matching.forEach(t => {
+      if (cc === 1) t.voice.modulation(norm);           // CC1: modulation → filter
+      else if (cc === 64) t.voice.sustain(norm >= 0.5); // CC64: sustain pedal
+      else if (cc === 7) t.voice.setGain(norm);         // CC7: volume → fader
+    });
+  };
+
+  // Route MIDI pitch bend to matching tracks.
+  engine.routePitchBend = (channel, value) => {
+    const tracks = engine.tracks;
+    const matching = tracks.filter(t => t.midiChannel === null || t.midiChannel === channel);
+    matching.forEach(t => t.voice.pitchBend(value));
+  };
+
   // ---- piano roll audition (backlog #30) ----------------------------------
   // Preview a note through one specific track's voice — the track the selected
   // clip belongs to — bypassing the global live-note routing (active/armed

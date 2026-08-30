@@ -54,6 +54,11 @@ export class TrackVoices {
       this.voices.push(this._createVoice());
     }
     this.rebuildChain();
+    // CC state (backlog #174): pitch bend, modulation, sustain
+    this._pitchBend = 0;      // -1.0..1.0
+    this._modulation = 0;     // 0..1
+    this._sustain = false;     // sustain pedal held
+    this._pitchBendRange = 2;  // semitones (±2 default)
   }
 
   _wave() {
@@ -202,7 +207,14 @@ export class TrackVoices {
     this._armOsc(v, noteName, at);
     this._ensureStarted(v);
     v.velScale = velocityScale(vel);
+    v._sustainHeld = false;
     scheduleEnvelope(v.env.gain, this.ctx, at, this.track.adsr, vel);
+    // Apply current pitch bend to newly armed oscillator (backlog #174)
+    if (this._pitchBend !== 0 && v.osc && v.osc.frequency) {
+      const semitones = this._pitchBend * this._pitchBendRange;
+      const freq = noteToFreq(noteName) * Math.pow(2, semitones / 12);
+      try { v.osc.frequency.setValueAtTime(freq, at); } catch (e) {}
+    }
     v.activeNote = noteName;
     if (dur) {
       const end = at + Math.max(0.03, dur);
@@ -219,6 +231,11 @@ export class TrackVoices {
     const noteName = resolve(note);
     const v = this.voices.find(x => x.activeNote === noteName);
     if (!v) return;
+    // Sustain pedal (backlog #174): hold the voice until sustain is released
+    if (this._sustain) {
+      v._sustainHeld = true;
+      return;
+    }
     scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr, v.velScale);
     v.busyUntil = at + this.track.adsr.r + 0.01;
     v.activeNote = null;
@@ -245,6 +262,60 @@ export class TrackVoices {
   activeVoices(at) {
     return this.voices.filter(v => v.activeNote !== null || v.busyUntil > at).length;
   }
+
+  // Pitch bend (backlog #174): value -1.0..1.0 shifts active voices by
+  // _pitchBendRange semitones. Applied to oscillator frequency in-place.
+  pitchBend(value) {
+    this._pitchBend = Math.max(-1, Math.min(1, value));
+    const now = this.ctx.currentTime;
+    this.voices.forEach(v => {
+      if (v.activeNote && v.osc && v.osc.frequency) {
+        const baseFreq = noteToFreq(v.activeNote);
+        const semitones = this._pitchBend * this._pitchBendRange;
+        const freq = baseFreq * Math.pow(2, semitones / 12);
+        try { v.osc.frequency.setValueAtTime(freq, now); } catch (e) {}
+      }
+    });
+  }
+
+  // Modulation wheel (CC1, backlog #174): value 0..1 scales the filter
+  // frequency — 0 = track default, 1 = full cutoff (20000 Hz).
+  modulation(value) {
+    this._modulation = Math.max(0, Math.min(1, value));
+    const now = this.ctx.currentTime;
+    const fp = this._filterParams();
+    this.voices.forEach(v => {
+      if (v.filter) {
+        const base = fp ? fp.freq : 20000;
+        const target = base + this._modulation * (20000 - base);
+        try { v.filter.frequency.setTargetAtTime(target, now, 0.02); } catch (e) {}
+      }
+    });
+  }
+
+  // Sustain pedal (CC64, backlog #174): when held, noteOff does not release;
+  // when released, all voices that were held get released.
+  sustain(held) {
+    const wasSustain = this._sustain;
+    this._sustain = !!held;
+    if (wasSustain && !this._sustain) {
+      // Release all held voices
+      const now = this.ctx.currentTime;
+      this.voices.forEach(v => {
+        if (v._sustainHeld) {
+          scheduleRelease(v.env.gain, this.ctx, now, this.track.adsr, v.velScale);
+          v.busyUntil = now + this.track.adsr.r + 0.01;
+          v.activeNote = null;
+          v.velScale = undefined;
+          v._sustainHeld = false;
+        }
+      });
+    }
+  }
+
+  getSustain() { return this._sustain; }
+  getPitchBend() { return this._pitchBend; }
+  getModulation() { return this._modulation; }
 
   dispose() {
     try {

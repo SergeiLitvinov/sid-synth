@@ -373,6 +373,12 @@ console.log('SID Synth Modular loaded');
     onNoteOff: (note, channel) => {
       if (trackEngine) _routeMidiNote(note, channel, false);
     },
+    onCC: (channel, cc, value) => {
+      if (trackEngine) trackEngine.routeCC(channel, cc, value);
+    },
+    onPitchBend: (channel, value) => {
+      if (trackEngine) trackEngine.routePitchBend(channel, value);
+    },
   });
 
   function _routeMidiNote(note, channel, isOn) {
