@@ -324,12 +324,63 @@ check('round-trip preserves folder and collapsed', () => {
 
 check('parseProject normalizes tracks missing folder/collapsed', () => {
   const raw = {
-    schemaVersion: SCHEMA_VERSION, name: 'x', tempo: 120,
+    schemaVersion: 1, name: 'x', tempo: 120,
     rack: { components: [], connections: [] },
-    tracks: [{ id: 'trk_1', name: 'T', color: '#4af74a', grid: [] }],
+    tracks: [{ id: 'trk_1', grid: [], rt: [] }],
   };
-  const t = parseProject(raw).tracks[0];
-  return t && t.folder === null && t.collapsed === false;
+  const p = parseProject(raw);
+  const t = p.tracks[0];
+  return t.folder === null && t.collapsed === false;
+});
+
+check('round-trip preserves insert devices', () => {
+  const st = fixtureState();
+  st.tracks = [defaultTrackData({
+    id: 'trk_1',
+    inserts: [{ id: 'ins_1', type: 'delay', params: { time: 0.6, feedback: 0.3, mix: 0.5 } }],
+  })];
+  const p = serializeProject(st);
+  const back = roundTrip(p);
+  const ins = back.tracks[0].inserts;
+  return Array.isArray(ins) && ins.length === 1
+    && ins[0].id === 'ins_1' && ins[0].type === 'delay'
+    && ins[0].params.time === 0.6 && ins[0].params.mix === 0.5;
+});
+
+check('parseProject normalizes tracks missing inserts', () => {
+  const raw = {
+    schemaVersion: 1, name: 'x', tempo: 120,
+    rack: { components: [], connections: [] },
+    tracks: [{ id: 'trk_1', grid: [], rt: [], clips: [] }],
+  };
+  const p = parseProject(raw);
+  const t = p.tracks[0];
+  return Array.isArray(t.inserts) && t.inserts.length === 0;
+});
+
+check('serializeProject round-trips midiChannel', () => {
+  const st = fixtureState();
+  st.tracks = [defaultTrackData({ id: 'trk_1', midiChannel: 5 })];
+  const p = serializeProject(st);
+  return p.tracks[0].midiChannel === 5;
+});
+check('parseProject normalizes midiChannel', () => {
+  const raw = {
+    schemaVersion: 1, name: 'x', tempo: 120,
+    rack: { components: [], connections: [] },
+    tracks: [{ id: 'trk_1', midiChannel: 12, grid: [], rt: [], clips: [] }],
+  };
+  const p = parseProject(raw);
+  return p.tracks[0].midiChannel === 12;
+});
+check('parseProject defaults midiChannel to null when missing', () => {
+  const raw = {
+    schemaVersion: 1, name: 'x', tempo: 120,
+    rack: { components: [], connections: [] },
+    tracks: [{ id: 'trk_1', grid: [], rt: [], clips: [] }],
+  };
+  const p = parseProject(raw);
+  return p.tracks[0].midiChannel === null;
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;

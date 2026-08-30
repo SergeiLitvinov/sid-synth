@@ -4,6 +4,8 @@
 // the timer and the musical position. The engine's _tick is hooked into the
 // transport's scheduler passes so one clock drives everything.
 
+import { STEPS_PER_LOOP } from './trackEngine.js';
+
 export function createStepEngineAdapter(engine, transport) {
   // Sync the engine's clock to the transport's so engine._tick computes the
   // same elapsed time the transport does.
@@ -17,6 +19,7 @@ export function createStepEngineAdapter(engine, transport) {
     engine._startMs = transport._startMs;
     engine._playStartCtx = transport._playStartCtx;
     engine._cursorLoopAbs = transport._playStartCtx;
+    engine._resetLinearPlayback();
     engine.tracks.forEach(t => {
       t.rt.forEach(ev => { ev._nextAbs = engine._playStartCtx + ev.start; });
     });
@@ -29,6 +32,32 @@ export function createStepEngineAdapter(engine, transport) {
     engine._loopPos = 0;
     engine._loopCount = 0;
     engine.tracks.forEach(t => t.voice.allOff(engine.ctx.currentTime));
+  });
+
+  transport.onSeek(({ pos, playing }) => {
+    if (!playing) return;
+    // Kill voices that were sounding at the old position to avoid bleed.
+    engine.tracks.forEach(t => t.voice.allOff(engine.ctx.currentTime));
+    // Sync engine clock to the transport's rebased clock.
+    engine._startMs = transport._startMs;
+    engine._playStartCtx = transport._playStartCtx;
+    // Reset grid cursor to the step matching the new loop-relative position.
+    const ticksToSec = engine.stepDur / (engine.ppq / 4);
+    engine._loopPos = transport._loopPosTicks * ticksToSec;
+    engine._loopCount = transport._loopCount;
+    const stepDurTicks = engine.ppq / 4;
+    engine._cursor = Math.floor((transport._loopPosTicks) / stepDurTicks) % STEPS_PER_LOOP;
+    engine._cursorLoopAbs = transport._playStartCtx + engine._loopCount * engine.loopDur;
+    // Reset linear playback flags so events before the seek can be rescheduled.
+    engine._resetLinearPlayback();
+    // Reset RT event pointers to the new loop-relative position.
+    engine.tracks.forEach(t => {
+      t.rt.forEach(ev => {
+        ev._nextAbs = engine._playStartCtx + engine._loopPos + ev.start;
+      });
+    });
+    // Chase: re-trigger sustained notes at the new position.
+    engine.chaseToTick(pos);
   });
 
   // Each transport scheduler pass runs the engine's own scheduler tick.

@@ -64,7 +64,7 @@ check('position maps back to seconds', () => {
   return near(f.t.getState().loopPosSec, 1.0);
 });
 check('loop wraps at loopLenTicks and fires onLoopWrap', () => {
-  const f = makeTransportFixture(120);
+  const f = makeTransportFixture(120, { loopEnabled: true });
   let wraps = 0;
   f.t.onLoopWrap((n) => { wraps = n; });
   f.play();
@@ -125,7 +125,7 @@ check('createTransport honors an injected tempo map', () => {
 
 // ---- seek (backlog #16: markers navigate the timeline) --------------------
 check('seek moves the position to an absolute tick (stopped)', () => {
-  const f = makeTransportFixture(120);
+  const f = makeTransportFixture(120, { loopEnabled: true });
   f.t.seek(1920);
   const s = f.t.getState();
   return s.playing === false
@@ -145,7 +145,7 @@ check('seek while stopped fires an onTick update', () => {
   return seen !== null && seen.loopPosTicks === 960 && seen.loopCount === 0;
 });
 check('seek while playing rebases the clock', () => {
-  const f = makeTransportFixture(120);
+  const f = makeTransportFixture(120, { loopEnabled: true });
   f.play();
   f.t.seek(1920);
   const posAfterSeek = f.t.getState().loopPosTicks;
@@ -253,6 +253,192 @@ check('adapter: grid + rt play together', () => {
   f.stop();
   const notes = f.spy.map(s => s.note);
   return notes.includes('C4') && notes.includes('E2');
+});
+check('adapter: arranged clips replay after transport restart', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 }); // loop mirror
+  f.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'A3', start: 0, dur: 240 }] });
+  f.play();
+  f.set(2000); f.transport._tick();
+  const first = f.spy.filter(s => s.note === 'A3').length;
+  f.stop();
+  f.set(2000); f.play();
+  f.set(3900); f.transport._tick(); // elapsed 1.9s after the second start
+  const second = f.spy.filter(s => s.note === 'A3').length;
+  return first === 1 && second === 2;
+});
+
+// ---- onSeek event --------------------------------------------------------
+check('seek fires onSeek event with position info', () => {
+  const f = makeTransportFixture(120);
+  f.play();
+  let seen = null;
+  f.t.onSeek((info) => { seen = info; });
+  f.t.seek(960);
+  return seen !== null && seen.pos === 960 && seen.playing === true && seen.loopCount === 0;
+});
+check('seek while stopped does not fire onSeek (no chase needed)', () => {
+  const f = makeTransportFixture(120);
+  let seen = null;
+  f.t.onSeek((info) => { seen = info; });
+  f.t.seek(480);
+  return seen !== null && seen.playing === false;
+});
+
+// ---- adapter seek + chase ------------------------------------------------
+check('adapter: seek while playing kills old voices and chases sustained notes', () => {
+  const f = makeAdapterFixture(120);
+  // Create loop clip and populate with a sustained note at step 2 (tick 240..480)
+  f.engine.addClip('trk_a', { start: 0, length: 1920 });
+  f.engine.setClipEvents('trk_a', f.track.clips[0].id, [
+    { note: 'C4', start: 240, dur: 240, velocity: 100 },
+  ]);
+  f.play();
+  f.set(500); f.transport._tick(); // at tick ~600, note ended
+  f.spy.length = 0;
+  // Seek to tick 360 — inside the note (240..480), should chase
+  f.transport.seek(360);
+  const chased = f.spy.filter(s => s.note === 'C4');
+  return chased.length === 1 && chased[0].dur > 0 && chased[0].dur < 0.25;
+});
+check('adapter: seek does not chase notes that ended before the seek point', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 });
+  f.engine.setClipEvents('trk_a', f.track.clips[0].id, [
+    { note: 'C4', start: 0, dur: 120, velocity: 100 }, // ends at tick 120
+  ]);
+  f.play();
+  f.set(500); f.transport._tick();
+  f.spy.length = 0;
+  f.transport.seek(240); // well past the note
+  return f.spy.filter(s => s.note === 'C4').length === 0;
+});
+check('adapter: seek does not chase notes that start after the seek point', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 });
+  f.engine.setClipEvents('trk_a', f.track.clips[0].id, [
+    { note: 'C4', start: 480, dur: 120, velocity: 100 }, // starts at tick 480
+  ]);
+  f.play();
+  f.set(500); f.transport._tick();
+  f.spy.length = 0;
+  f.transport.seek(240); // before the note starts
+  return f.spy.filter(s => s.note === 'C4').length === 0;
+});
+check('adapter: seek chases arranged clip sustained notes', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 }); // loop mirror
+  f.engine.addClip('trk_a', { start: 1920, length: 1920, events: [
+    { note: 'A3', start: 0, dur: 480, velocity: 100 }, // sounds tick 1920..2400
+  ]});
+  f.play();
+  f.set(3000); f.transport._tick();
+  f.spy.length = 0;
+  f.transport.seek(2160); // inside the arranged note (1920..2400)
+  const chased = f.spy.filter(s => s.note === 'A3');
+  return chased.length === 1 && chased[0].dur > 0 && chased[0].dur < 0.5;
+});
+check('adapter: seek resets linear playback flags', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 }); // loop mirror
+  f.engine.addClip('trk_a', { start: 1920, length: 1920, events: [
+    { note: 'A3', start: 0, dur: 120, velocity: 100 },
+  ]});
+  f.play();
+  f.set(2500); f.transport._tick(); // A3 plays at tick 1920
+  const ev = f.track.clips[1].events[0];
+  return ev._scheduledLin === true;
+});
+check('adapter: seek clears linear flags so events can replay', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 }); // loop mirror
+  f.engine.addClip('trk_a', { start: 1920, length: 1920, events: [
+    { note: 'A3', start: 0, dur: 120, velocity: 100 },
+  ]});
+  f.play();
+  f.set(2500); f.transport._tick();
+  f.transport.seek(0); // seek back to start
+  const ev = f.track.clips[1].events[0];
+  return ev._scheduledLin !== true;
+});
+
+// ---- loop locators (backlog #155) ---------------------------------------
+check('loopEnabled defaults to false', () => {
+  const t = createTransport({ bpm: 120 });
+  return t.loopEnabled === false && t.loopStartTicks === 0 && t.loopEndTicks === 1920;
+});
+check('setLoopRegion enables loop and sets bounds', () => {
+  const t = createTransport({ bpm: 120 });
+  t.setLoopRegion(480, 1440);
+  return t.loopEnabled === true && t.loopStartTicks === 480 && t.loopEndTicks === 1440 && t.loopLenTicks === 960;
+});
+check('setLoopEnabled toggles loop on/off', () => {
+  const t = createTransport({ bpm: 120 });
+  t.setLoopEnabled(true);
+  return t.loopEnabled === true;
+});
+check('loopEnabled false plays linearly (no wrapping)', () => {
+  const f = makeTransportFixture(120);
+  f.play();
+  f.advanceAndTick(3000); // 3s = 2880 ticks — past one bar
+  const s = f.t.getState();
+  return s.loopPosTicks === 2880 && s.loopCount === 0;
+});
+check('loopEnabled true wraps within [start, end]', () => {
+  const f = makeTransportFixture(120, { loopEnabled: true, loopStartTicks: 480, loopEndTicks: 1440 });
+  let wraps = 0;
+  f.t.onLoopWrap((n) => { wraps++; });
+  f.play();
+  f.advanceAndTick(1500); // 1440 ticks total; offset from 480 = 960 → within region, no wrap yet
+  const s1 = f.t.getState();
+  f.advanceAndTick(600); // total 1920; offset 1440 → 1 full wrap → back to start
+  const s2 = f.t.getState();
+  return wraps >= 1 && s2.loopPosTicks >= 480 && s2.loopPosTicks < 1440;
+});
+check('loopLenTicks derived from loopStart/end', () => {
+  const t = createTransport({ bpm: 120, loopStartTicks: 240, loopEndTicks: 720 });
+  return t.loopLenTicks === 480;
+});
+check('loopLenTicks setter sets loopEnd from 0', () => {
+  const t = createTransport({ bpm: 120 });
+  t.loopLenTicks = 960;
+  return t.loopEndTicks === 960 && t.loopStartTicks === 0;
+});
+
+// ---- project end (backlog #155) -----------------------------------------
+check('projectEndTicks defaults to null', () => {
+  const t = createTransport({ bpm: 120 });
+  return t.projectEndTicks === null;
+});
+check('setProjectEnd sets project end ticks', () => {
+  const t = createTransport({ bpm: 120 });
+  t.setProjectEnd(5760);
+  return t.projectEndTicks === 5760;
+});
+check('setProjectEnd(null) clears project end', () => {
+  const t = createTransport({ bpm: 120 });
+  t.setProjectEnd(5760);
+  t.setProjectEnd(null);
+  return t.projectEndTicks === null;
+});
+check('playback stops at project end', () => {
+  const f = makeTransportFixture(120);
+  f.t.setProjectEnd(960); // stop after 960 ticks (0.5s at 120bpm)
+  f.play();
+  f.advanceAndTick(1200); // 1s = 960 ticks → should have stopped
+  return f.t.getState().playing === false;
+});
+check('seek is clamped to project end', () => {
+  const t = createTransport({ bpm: 120 });
+  t.setProjectEnd(960);
+  t.seek(2000);
+  return t.getState().loopPosTicks <= 960;
+});
+check('getState includes loop/project fields', () => {
+  const t = createTransport({ bpm: 120, loopEnabled: true, loopStartTicks: 0, loopEndTicks: 1920 });
+  t.setProjectEnd(5760);
+  const s = t.getState();
+  return s.loopEnabled === true && s.loopStartTicks === 0 && s.loopEndTicks === 1920 && s.projectEndTicks === 5760;
 });
 
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;

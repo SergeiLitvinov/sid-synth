@@ -80,8 +80,13 @@ function normalizeLegacyTrack(t) {
     volume: typeof src.volume === 'number' ? src.volume : base.volume,
     gridNote: typeof src.gridNote === 'string' ? src.gridNote : base.gridNote,
     gridDur: typeof src.gridDur === 'number' && src.gridDur > 0 ? src.gridDur : base.gridDur,
+    midiChannel: typeof src.midiChannel === 'number' ? src.midiChannel : null,
     grid,
     rt,
     clips,
+    inserts: Array.isArray(src.inserts)
+      ? src.inserts.filter(i => i && typeof i === 'object' && typeof i.type === 'string')
+        .map(i => ({ id: typeof i.id === 'string' && i.id ? i.id : 'ins_' + Math.random().toString(36).slice(2, 8), type: i.type, params: i.params && typeof i.params === 'object' ? { ...i.params } : {} }))
+      : base.inserts,
   };
 }

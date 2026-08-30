@@ -79,6 +79,29 @@ check('rtToClipEvents: empty rt produces no events', () => {
   return rtToClipEvents([]).length === 0;
 });
 
+check('gridToClipEvents: cell vel maps to event velocity, default 100', () => {
+  const withVel = gridToClipEvents([{ note: 'C4', dur: 1, vel: 64 }]);
+  const noVel = gridToClipEvents([{ note: 'E4', dur: 1 }]);
+  return withVel[0].velocity === 64 && noVel[0].velocity === 100;
+});
+
+check('clipEventsToGrid: event velocity round-trips into cell vel', () => {
+  const grid = clipEventsToGrid([{ note: 'C4', start: 0, dur: 120, velocity: 64 }]);
+  const noVel = clipEventsToGrid([{ note: 'E4', start: 120, dur: 120 }]);
+  return grid[0].vel === 64 && !('vel' in noVel[1]);
+});
+
+check('clipEventsToRt: velocity passes through when present', () => {
+  const rt = clipEventsToRt([{ note: 'C4', start: 480, dur: 240, velocity: 90 }], { bpm: 120 });
+  const plain = clipEventsToRt([{ note: 'E4', start: 0, dur: 120 }]);
+  return rt[0].velocity === 90 && !('velocity' in plain[0]);
+});
+
+check('rtToClipEvents: defaults velocity to 100', () => {
+  const events = rtToClipEvents([{ note: 'C4', start: 0.5, dur: 0.25 }], { bpm: 120 });
+  return events[0].velocity === 100;
+});
+
 // ---- merge ---------------------------------------------------------------
 check('mergeClipEvents: sorts by start tick', () => {
   const g = gridToClipEvents([{ note: 'C4', dur: 1 }, null, { note: 'E4', dur: 1 }]);

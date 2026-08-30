@@ -4,8 +4,17 @@ import {
 import { createTempoMap, addSignature } from '../src/project/tempoMap.js';
 import { createTransport } from '../src/project/transport.js';
 import { createArranger } from '../src/arranger/arranger.js';
+import { createPianoRoll } from '../src/arranger/pianoRoll.js';
+import { noteToMidi, midiToNote, pianoRows, pianoSteps, layoutPianoNotes } from '../src/arranger/pianoRollLayout.js';
+import { quantizeStart, quantizeEvents } from '../src/arranger/quantize.js';
+import { transposeMidi, transposeEvents } from '../src/arranger/transpose.js';
+import { duplicateOffset, duplicateEvents } from '../src/arranger/duplicate.js';
+import { legatoEvents } from '../src/arranger/legato.js';
+import { fixedLengthDur, fixedLengthEvents } from '../src/arranger/fixedLength.js';
+import { humanizeStart, humanizeVelocity, humanizeEvents } from '../src/arranger/humanize.js';
+import { previewEvents } from '../src/arranger/preview.js';
 import { createHistory } from '../src/project/history.js';
-import { addClipCommand, moveClipCommand, removeClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, renameTrackCommand } from '../src/project/trackCommands.js';
+import { addClipCommand, moveClipCommand, removeClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, renameTrackCommand, editClipEventsCommand } from '../src/project/trackCommands.js';
 import { createMarkerStore, addMarker, removeMarker, normalizeMarker } from '../src/project/markers.js';
 import { addMarkerCommand, removeMarkerCommand } from '../src/project/markerCommands.js';
 
@@ -1471,6 +1480,1316 @@ check('arranger re-renders when history changes', () => {
   listeners.forEach(fn => fn({ canUndo: false, canRedo: false }));
   const lanes = container.querySelectorAll('.arranger-lane');
   return lanes.length === 1;
+});
+
+// ---- piano roll layout helpers (backlog #25) -------------------------------
+check('noteToMidi/midiToNote round-trip over C2..B4', () => {
+  for (let midi = 36; midi <= 83; midi++) {
+    if (noteToMidi(midiToNote(midi)) !== midi) return false;
+  }
+  return noteToMidi('C4') === 60 && noteToMidi('A3') === 57 && noteToMidi('C#4') === 61
+    && noteToMidi('c4') === 60 && noteToMidi('H4') === null && midiToNote(71) === 'B4';
+});
+
+check('pianoRows lists B4..C3 top-first with black keys flagged', () => {
+  const rows = pianoRows();
+  return rows.length === 24 && rows[0].note === 'B4' && rows[23].note === 'C3'
+    && rows[0].black === false && rows[1].black === true;
+});
+
+check('pianoSteps quantizes the clip length to sixteenths', () => {
+  const s1 = pianoSteps({ length: 1920 });
+  const s2 = pianoSteps({ length: 960 });
+  const s3 = pianoSteps({ length: 130 });
+  return s1.stepTicks === 120 && s1.steps === 16 && s2.steps === 8 && s3.steps === 2;
+});
+
+check('layoutPianoNotes positions bars by pitch row and step column', () => {
+  const bars = layoutPianoNotes(
+    [
+      { note: 'C4', start: 0, dur: 120 },
+      { note: 'C4', start: 120, dur: 240 },
+      { note: 'C5', start: 0, dur: 120 }, // out of the default range -> skipped
+    ],
+    { clip: { length: 1920 }, cellW: 18, cellH: 12 },
+  );
+  return bars.length === 2
+    && bars[0].x === 0 && bars[0].y === (71 - 60) * 12 && bars[0].width === 18
+    && bars[1].x === 18 && bars[1].width === 36;
+});
+
+// ---- piano roll quantize helper (backlog #33) ------------------------------
+check('quantizeStart snaps a start to the 1/16 grid', () => {
+  return quantizeStart(30) === 0
+    && quantizeStart(150) === 120
+    && quantizeStart(240) === 240;
+});
+
+check('quantizeStart honors the grid 1/8 and 1/4', () => {
+  return quantizeStart(60, { grid: 2 }) === 0
+    && quantizeStart(300, { grid: 2 }) === 240
+    && quantizeStart(200, { grid: 4 }) === 0
+    && quantizeStart(550, { grid: 4 }) === 480;
+});
+
+check('quantizeStart strength pulls a start part-way to the grid', () => {
+  return quantizeStart(30, { strength: 50 }) === 15
+    && quantizeStart(30, { strength: 0 }) === 30
+    && quantizeStart(300, { grid: 2, strength: 50 }) === 270;
+});
+
+check('quantizeStart swing delays every second grid slot', () => {
+  return quantizeStart(0, { swing: 50 }) === 0
+    && quantizeStart(120, { swing: 50 }) === 180
+    && quantizeStart(240, { swing: 50 }) === 240
+    && quantizeStart(360, { swing: 50 }) === 420;
+});
+
+check('quantizeStart swing combines with strength', () => {
+  return quantizeStart(120, { swing: 50, strength: 50 }) === 150;
+});
+
+check('quantizeStart never pulls a start below 0', () => {
+  return quantizeStart(10) === 0 && quantizeStart(1, { strength: 100 }) === 0;
+});
+
+check('quantizeEvents keeps unchanged events by reference', () => {
+  const events = [
+    { note: 'C4', start: 30, dur: 120 },
+    { note: 'D4', start: 0, dur: 120 },
+    { note: 'E4', start: 150, dur: 120, velocity: 64 },
+  ];
+  const out = quantizeEvents(events, {});
+  return out[0] !== events[0] && out[0].start === 0 && out[0].dur === 120
+    && out[1] === events[1] && out[1].start === 0
+    && out[2] !== events[2] && out[2].start === 120 && out[2].velocity === 64;
+});
+
+// ---- piano roll transpose helper (backlog #34) ------------------------------
+check('transposeMidi shifts a note up and down and clamps to the pitch range', () => {
+  return transposeMidi(60, 2) === 62
+    && transposeMidi(60, -3) === 57
+    && transposeMidi(71, 2) === 71       // B4 + 2 clamps to B4
+    && transposeMidi(48, -2) === 48      // C3 - 2 clamps to C3
+    && transposeMidi(60, 12, { min: 0, max: 127 }) === 72;
+});
+
+check('transposeEvents shifts note names and preserves the other fields', () => {
+  const events = [
+    { note: 'B3', start: 120, dur: 240, velocity: 64 },
+    { note: 'C3', start: 360, dur: 120 },
+    { note: 'B4', start: 480, dur: 120, velocity: 100 },
+  ];
+  const out = transposeEvents(events, 2);
+  return out[0].note === 'C#4' && out[0].start === 120 && out[0].dur === 240 && out[0].velocity === 64
+    && out[1].note === 'D3' && out[1].start === 360
+    && out[2].note === 'B4' && out[2].start === 480 && out[2].velocity === 100; // clamped
+});
+
+check('transposeEvents keeps unchanged events by reference', () => {
+  const events = [
+    { note: 'B4', start: 0, dur: 120 },  // clamps back to B4
+    { note: 'C4', start: 120, dur: 120 },
+  ];
+  const out = transposeEvents(events, 3);
+  return out[0] === events[0] && out[1] !== events[1] && out[1].note === 'D#4';
+});
+
+check('transposeEvents honors a custom clamp range and a zero interval', () => {
+  const events = [{ note: 'C4', start: 0, dur: 120 }];
+  const up = transposeEvents(events, 12, { min: 0, max: 127 });
+  const zero = transposeEvents(events, 0);
+  return up[0].note === 'C5' && up[0].start === 0 && zero === events;
+});
+
+// ---- piano roll duplicate helper (backlog #35) ------------------------------
+check('duplicateOffset tiles a phrase right after its span', () => {
+  const span = duplicateOffset([{ note: 'B3', start: 120, dur: 240 }, { note: 'C3', start: 360, dur: 120 }], { stepTicks: 120 });
+  const single = duplicateOffset([{ note: 'C4', start: 0, dur: 240 }], { stepTicks: 120 });
+  const noDur = duplicateOffset([{ note: 'C4', start: 0 }], { stepTicks: 120 });
+  const empty = duplicateOffset([], { stepTicks: 120 });
+  return span === 360 && single === 240 && noDur === 120 && empty === 0;
+});
+
+check('duplicateEvents copies each event by the phrase offset, preserving fields', () => {
+  const events = [
+    { note: 'B3', start: 120, dur: 240, velocity: 64 },
+    { note: 'C3', start: 360, dur: 120 },
+  ];
+  const out = duplicateEvents(events, { stepTicks: 120 });
+  const emptyArr = [];
+  const empty = duplicateEvents(emptyArr, { stepTicks: 120 });
+  return out.length === 2
+    && out[0].start === 480 && out[0].note === 'B3' && out[0].dur === 240 && out[0].velocity === 64
+    && out[1].start === 720 && out[1].note === 'C3' && out[1].dur === 120
+    && out[0] !== events[0] && out[1] !== events[1] && events[0].start === 120
+    && empty === emptyArr;
+});
+
+// ---- piano roll command (backlog #25) --------------------------------------
+check('editClipEventsCommand replaces events with undo/redo', () => {
+  const engine = {
+    byId: { trk_a: { clips: [{ id: 'c1', events: [{ note: 'C4', start: 0, dur: 120 }] }] } },
+    setClipEvents: (id, clipId, events) => {
+      const c = engine.byId[id].clips.find(x => x.id === clipId);
+      if (!c) return false;
+      c.events = (events || []).map(ev => ({ ...ev }));
+      return true;
+    },
+  };
+  const history = createHistory();
+  history.execute(editClipEventsCommand(engine, 'trk_a', 'c1', [{ note: 'D4', start: 120, dur: 120 }]));
+  const applied = engine.byId.trk_a.clips[0].events[0].note;
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events[0].note;
+  history.redo();
+  const redone = engine.byId.trk_a.clips[0].events[0].note;
+  return applied === 'D4' && undone === 'C4' && redone === 'D4';
+});
+
+// ---- piano roll DOM (backlog #25) ------------------------------------------
+// Faux engine exposing the piano-roll surface: getTracks + byId + setClipEvents.
+function prEngine(clips) {
+  const t = {
+    id: 'trk_a', name: 'A', color: '#4af74a',
+    grid: Array(16).fill(null), rt: [],
+    clips: (clips || []).map(c => ({ ...c, events: (c.events || []).slice() })),
+  };
+  return {
+    tracks: [t],
+    byId: { trk_a: t },
+    getTracks: () => [{
+      ...t, grid: t.grid.slice(),
+      clips: t.clips.map(c => ({ ...c, events: (c.events || []).slice() })),
+    }],
+    setClipEvents: (id, clipId, events) => {
+      const c = t.clips.find(x => x.id === clipId);
+      if (!c) return false;
+      c.events = (events || []).map(ev => ({ ...ev })).sort((a, b) => (a.start || 0) - (b.start || 0));
+      return true;
+    },
+  };
+}
+
+check('piano roll shows an empty hint when no clip is selected', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({ container, engine: prEngine([]), transport: fauxTransport(), history: createHistory() });
+  const emptyAtStart = !!container.querySelector('.pr-empty');
+  pr.setSelection(null);
+  return emptyAtStart && !!container.querySelector('.pr-empty');
+});
+
+check('piano roll renders a pitch/step grid for the selected clip', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const cells = container.querySelectorAll('.pr-cell');
+  const steps = container.querySelectorAll('.pr-step');
+  const notes = container.querySelectorAll('.pr-note');
+  return cells.length === 16 * 24 && steps.length === 16
+    && notes.length === 1 && notes[0].title.startsWith('C4')
+    && container.querySelector('.pr-title').textContent.includes('Clip 1');
+});
+
+check('clicking an empty piano roll cell adds a note (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const body = container.querySelector('.pr-body');
+  // Column 3, row A3 (midi 57): ri = 71 - 57 = 14; x = 34 + 3*18 = 88; y = 14*12.
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 88, clientY: 14 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 88, clientY: 14 * 12 }));
+  const added = engine.byId.trk_a.clips[0].events.find(e => e.note === 'A3');
+  history.undo();
+  const afterUndo = engine.byId.trk_a.clips[0].events.length;
+  return !!added && added.start === 360 && added.dur === 120 && added.velocity === 100 && afterUndo === 0;
+});
+
+check('clicking an existing piano roll note removes it (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const note = container.querySelector('.pr-note');
+  // A plain click (no drag) on the bar removes it (backlog #25).
+  note.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', {}));
+  const afterClick = engine.byId.trk_a.clips[0].events.length;
+  history.undo();
+  const afterUndo = engine.byId.trk_a.clips[0].events.length;
+  return afterClick === 0 && afterUndo === 1 && container.querySelectorAll('.pr-note').length === 1;
+});
+
+check('dragging a piano roll note moves it to a new step and pitch (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const note = container.querySelector('.pr-note');
+  // Grab C4 at column 0 (clientX 34), then drag +2 columns (+36) and +2 rows
+  // down (+24): target column 2, pitch A#3 (midi 58).
+  note.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 34 + 2 * 18, clientY: 11 * 12 + 2 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', {}));
+  const moved = engine.byId.trk_a.clips[0].events[0];
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events[0];
+  return moved.note === 'A#3' && moved.start === 240 && moved.dur === 120
+    && undone.note === 'C4' && undone.start === 0;
+});
+
+check('dragging the right edge of a piano roll note resizes its duration (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const edge = container.querySelector('.pr-note-edge-r');
+  // Stretch the right edge from column 1 to column 3: dur 120 -> 360.
+  edge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34 + 18, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 34 + 3 * 18, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', {}));
+  const resized = engine.byId.trk_a.clips[0].events[0];
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events[0];
+  return resized.start === 0 && resized.dur === 360
+    && undone.start === 0 && undone.dur === 120;
+});
+
+check('dragging the left edge of a piano roll note trims its start (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 240 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const edge = container.querySelector('.pr-note-edge-l');
+  // Push the left edge from column 0 to column 2: start 0 -> 120, dur 240 -> 120.
+  edge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 34 + 2 * 18, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', {}));
+  const trimmed = engine.byId.trk_a.clips[0].events[0];
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events[0];
+  return trimmed.start === 120 && trimmed.dur === 120
+    && undone.start === 0 && undone.dur === 240;
+});
+
+check('piano roll renders a velocity bar per note (backlog #27)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+      { note: 'C4', start: 0, dur: 120, velocity: 100 },
+      { note: 'C4', start: 120, dur: 240 },
+    ] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const bars = container.querySelectorAll('.pr-vel-bar');
+  const lane = container.querySelector('.pr-vel');
+  // Two notes -> two bars; default velocity 100 -> height round(100/127*40)=31;
+  // the second event starts at column 1 (left 34+18) and spans 2 steps (36px).
+  return bars.length === 2 && !!lane
+    && bars[0].style.height === Math.round(100 / 127 * 40) + 'px'
+    && bars[1].style.left === (34 + 18) + 'px'
+    && bars[1].style.width === (2 * 18) + 'px';
+});
+
+check('dragging a piano roll velocity bar changes the note velocity (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120, velocity: 100 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const bar = container.querySelector('.pr-vel-bar');
+  const lane = container.querySelector('.pr-vel');
+  // Grab near the lane top (velocity ~127), then move to mid-lane: y = 20 of 40
+  // -> velocity = round((1 - 20/40) * 127) = 64.
+  bar.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 5, clientY: 2 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 5, clientY: 20 }));
+  window.dispatchEvent(new PointerEvent('pointerup', {}));
+  const v = engine.byId.trk_a.clips[0].events[0].velocity;
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events[0].velocity;
+  return v === 64 && undone === 100;
+});
+
+// ---- piano roll marquee selection (backlog #29) ----------------------------
+function marqueeSelect(container, x0, y0, x1, y1) {
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: x0, clientY: y0 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: x1, clientY: y1 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: x1, clientY: y1 }));
+}
+
+check('marquee box-selects the notes it covers (backlog #29)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+      { note: 'C4', start: 0, dur: 120 },
+      { note: 'E4', start: 240, dur: 120 },
+      { note: 'G4', start: 480, dur: 120 },
+    ] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // Box (34,0)..(106,156) covers C4 (col 0) and E4 (col 2), not G4 (col 4).
+  marqueeSelect(container, 34, 0, 34 + 4 * 18, 13 * 12);
+  return container.querySelectorAll('.pr-note.selected').length === 2;
+});
+
+check('plain click on a selected note clears the selection without deleting', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120 },
+    { note: 'E4', start: 240, dur: 120 },
+  ] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  marqueeSelect(container, 34, 0, 34 + 4 * 18, 13 * 12);
+  const selCount = container.querySelectorAll('.pr-note.selected').length;
+  const first = container.querySelector('.pr-note');
+  first.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }));
+  const still = container.querySelectorAll('.pr-note').length;
+  const afterClear = container.querySelectorAll('.pr-note.selected').length;
+  return selCount === 2 && still === 2 && afterClear === 0
+    && engine.byId.trk_a.clips[0].events.length === 2;
+});
+
+check('dragging a selected note moves the whole selection (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120 },
+    { note: 'E4', start: 240, dur: 120 },
+  ] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  marqueeSelect(container, 34, 0, 34 + 4 * 18, 13 * 12);
+  const first = container.querySelector('.pr-note');
+  // Drag the first selected bar (C4, col 0) +1 column and +1 row down.
+  first.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 2, clientX: 34 + 18, clientY: 11 * 12 + 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }));
+  const evs = engine.byId.trk_a.clips[0].events.slice().sort((a, b) => a.start - b.start);
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events.slice().sort((a, b) => a.start - b.start);
+  return evs.length === 2
+    && evs[0].note === 'B3' && evs[0].start === 120 // C4 moved down+right
+    && evs[1].note === 'D#4' && evs[1].start === 360 // E4 moved with the group
+    && undone[0].note === 'C4' && undone[0].start === 0
+    && undone[1].note === 'E4' && undone[1].start === 240;
+});
+
+check('Delete removes every selected note as one undoable command', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120 },
+    { note: 'E4', start: 240, dur: 120 },
+    { note: 'G4', start: 480, dur: 120 },
+  ] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  marqueeSelect(container, 34, 0, 34 + 4 * 18, 13 * 12);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  const afterDelete = engine.byId.trk_a.clips[0].events.length;
+  history.undo();
+  const afterUndo = engine.byId.trk_a.clips[0].events.length;
+  return afterDelete === 1 && afterUndo === 3;
+});
+
+check('arranger reports clip selection changes via cfg.onSelectionChange', () => {
+  const container = document.createElement('div');
+  const seen = [];
+  createArranger({
+    container,
+    engine: fauxEngine([track([], {
+      id: 'trk_a', name: 'A',
+      clips: [{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, color: null, events: [] }],
+    })]),
+    transport: fauxTransport(),
+    cfg: { onSelectionChange: (s) => { seen.push(s); } },
+  });
+  const clip = container.querySelector('.arranger-clip');
+  clip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 0 }));
+  clip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 0 }));
+  return seen.some(s => s && s.trackId === 'trk_a' && s.clipId === 'c1');
+});
+
+// ---- piano roll audition (backlog #30) -----------------------------------
+
+function auditionEngine(clips) {
+  const base = prEngine(clips);
+  const calls = [];
+  const e = {
+    ...base,
+    calls,
+    auditionNote: (trackId, note, vel, dur) => calls.push({ type: 'on', trackId, note, vel, dur }),
+    auditionNoteOff: (trackId, note) => calls.push({ type: 'off', trackId, note }),
+  };
+  return e;
+}
+
+check('pressing a piano roll note auditions it and releases on pointer-up', () => {
+  const container = document.createElement('div');
+  const engine = auditionEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120, velocity: 64 },
+  ] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const note = container.querySelector('.pr-note');
+  const r = note.getBoundingClientRect();
+  note.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 3, clientX: r.left + 5, clientY: r.top + 5 }));
+  const ons = engine.calls.filter(c => c.type === 'on');
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3 }));
+  const offs = engine.calls.filter(c => c.type === 'off');
+  return ons.length === 1 && ons[0].trackId === 'trk_a' && ons[0].note === 'C4'
+    && ons[0].vel === 64 && ons[0].dur === undefined
+    && offs.length === 1 && offs[0].note === 'C4';
+});
+
+check('dragging a note re-auditions the target pitch', () => {
+  const container = document.createElement('div');
+  const engine = auditionEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120 },
+  ] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const note = container.querySelector('.pr-note');
+  const r = note.getBoundingClientRect();
+  note.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 4, clientX: r.left + 5, clientY: r.top + 5 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 4, clientX: r.left + 5 + 18, clientY: r.top + 5 + 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 4 }));
+  const ons = engine.calls.filter(c => c.type === 'on').map(c => c.note);
+  const offs = engine.calls.filter(c => c.type === 'off').map(c => c.note);
+  return ons.join(',') === 'C4,B3' && offs.join(',') === 'C4,B3';
+});
+
+check('drawing a note on an empty cell auditions a self-terminating preview', () => {
+  const container = document.createElement('div');
+  const engine = auditionEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 5, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 5, clientX: 34, clientY: 11 * 12 }));
+  const ons = engine.calls.filter(c => c.type === 'on');
+  // 120 bpm / ppq 480: one sixteenth = 0.125s.
+  return ons.length === 1 && ons[0].note === 'C4' && ons[0].vel === 100 && ons[0].dur === 0.125;
+});
+
+// ---- piano roll zoom + snap (backlog #31) --------------------------------
+
+function snapButton(container, text) {
+  return [...container.querySelectorAll('.pr-snap-btn')].find(b => b.textContent === text);
+}
+
+function zoomButton(container, text) {
+  return [...container.querySelectorAll('.pr-zoom-btn')].find(b => b.textContent === text);
+}
+
+check('zoom buttons rescale the piano roll grid (backlog #31)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // 100% -> 125%: cellW 18 -> round(18*1.25) = 23, cellH 12 -> 15; a one-step
+  // note is then 23px wide. Zooming back out restores 18px and the label.
+  zoomButton(container, '+').click();
+  const grid = container.querySelector('.pr-body')._grid;
+  const noteW = container.querySelector('.pr-note').style.width;
+  zoomButton(container, '−').click();
+  const back = container.querySelector('.pr-body')._grid;
+  return grid.cellW === 23 && grid.cellH === 15 && noteW === '23px'
+    && back.cellW === 18 && back.cellH === 12
+    && container.querySelector('.pr-zoom-label').textContent === '18 px/step';
+});
+
+check('Ctrl+wheel zooms the piano roll grid (backlog #31)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const wrap = container.querySelector('.pr-wrap');
+  wrap.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: -100, bubbles: true, cancelable: true }));
+  const zoomed = container.querySelector('.pr-body')._grid.cellW;
+  // A plain wheel (no Ctrl) must not zoom.
+  wrap.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+  return zoomed === 23 && container.querySelector('.pr-body')._grid.cellW === 23;
+});
+
+check('snap 1/4 quantizes a drawn note to a quarter step (backlog #31)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // Draw at column 3 -> snapped up to the 1/4 column 4 -> start 480.
+  snapButton(container, '1/4').click();
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 88, clientY: 14 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 88, clientY: 14 * 12 }));
+  const added = engine.byId.trk_a.clips[0].events.find(e => e.note === 'A3');
+  return !!added && added.start === 480;
+});
+
+check('snap off draws a note at a sub-sixteenth position (backlog #31)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // clientX 61 -> x = 27 -> free column 1.5 -> start round(1.5 * 120) = 180.
+  snapButton(container, 'off').click();
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 61, clientY: 14 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 61, clientY: 14 * 12 }));
+  const added = engine.byId.trk_a.clips[0].events.find(e => e.note === 'A3');
+  return !!added && added.start === 180;
+});
+
+check('snap 1/8 quantizes a dragged note to even columns (backlog #31)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // Drag C4 (col 0) +1 column -> snapped to the 1/8 column 2 -> start 240.
+  snapButton(container, '1/8').click();
+  const note = container.querySelector('.pr-note');
+  note.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 34 + 18, clientY: 11 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+  const moved = engine.byId.trk_a.clips[0].events[0];
+  return moved.note === 'C4' && moved.start === 240;
+});
+
+// ---- piano roll quantize UI (backlog #33) ----------------------------------
+function qBtn(container) {
+  return container.querySelector('.pr-q-btn');
+}
+
+check('quantize row renders strength/swing inputs and a Q button (backlog #33)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  return !!qBtn(container)
+    && container.querySelector('.pr-q-strength').value === '100'
+    && container.querySelector('.pr-q-swing').value === '0';
+});
+
+check('Q snaps off-grid note starts to the active snap grid (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 30, dur: 120 }, { note: 'D4', start: 150, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  qBtn(container).click();
+  const snapped = engine.byId.trk_a.clips[0].events.map(e => e.start);
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events.map(e => e.start);
+  return snapped[0] === 0 && snapped[1] === 120 && undone[0] === 30 && undone[1] === 150;
+});
+
+check('Q applies only to the marquee selection', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 30, dur: 120 }, { note: 'C3', start: 150, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // Marquee-select only the C4 note (row 11 = y 132..144, cols 0..1).
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 132 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 64, clientY: 145 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 64, clientY: 145 }));
+  qBtn(container).click();
+  const starts = engine.byId.trk_a.clips[0].events.map(e => e.start).sort((a, b) => a - b);
+  return starts[0] === 0 && starts[1] === 150;
+});
+
+check('Q with swing shifts an odd sixteenth later (swing input respected)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 120, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-q-swing').value = '50';
+  qBtn(container).click();
+  return engine.byId.trk_a.clips[0].events[0].start === 180;
+});
+
+check('Q with strength 50 pulls an off-grid note halfway (strength input respected)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 30, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-q-strength').value = '50';
+  qBtn(container).click();
+  return engine.byId.trk_a.clips[0].events[0].start === 15;
+});
+
+check('Q is a no-op when no clip is selected', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({ container, engine: prEngine([]), transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  qBtn(container).click();
+  return !!container.querySelector('.pr-empty');
+});
+
+// ---- piano roll transpose UI (backlog #34) ---------------------------------
+function tBtn(container) {
+  return container.querySelector('.pr-t-btn');
+}
+
+check('transpose row renders a semitone input and a T button (backlog #34)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  return !!tBtn(container)
+    && container.querySelector('.pr-t-semi').value === '1'
+    && !!container.querySelector('.pr-t-name');
+});
+
+check('T transposes all notes by the interval (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'B3', start: 120, dur: 240 }, { note: 'C3', start: 360, dur: 120 }, { note: 'B4', start: 480, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-t-semi').value = '2';
+  tBtn(container).click();
+  const notes = engine.byId.trk_a.clips[0].events.map(e => e.note).sort();
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events.map(e => e.note).sort();
+  return notes[0] === 'B4' && notes[1] === 'C#4' && notes[2] === 'D3' && undone[0] === 'B3' && undone[1] === 'B4' && undone[2] === 'C3';
+});
+
+check('T applies only to the marquee selection', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }, { note: 'C3', start: 120, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 132 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 64, clientY: 145 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 64, clientY: 145 }));
+  container.querySelector('.pr-t-semi').value = '2';
+  tBtn(container).click();
+  const notes = engine.byId.trk_a.clips[0].events.map(e => e.note).sort();
+  return notes[0] === 'C3' && notes[1] === 'D4';
+});
+
+check('T honors a large interval and clamps to the visible pitch range', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-t-semi').value = '24';
+  tBtn(container).click();
+  const note = engine.byId.trk_a.clips[0].events[0].note;
+  container.querySelector('.pr-t-semi').value = '0';
+  tBtn(container).click();
+  return note === 'B4' && engine.byId.trk_a.clips[0].events[0].note === 'B4';
+});
+
+check('T is a no-op when no clip is selected', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({ container, engine: prEngine([]), transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  tBtn(container).click();
+  return !!container.querySelector('.pr-empty');
+});
+
+// ---- piano roll duplicate UI (backlog #35) ---------------------------------
+function ctrlD() {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd', ctrlKey: true, bubbles: true }));
+}
+
+check('Ctrl+D duplicates the marquee selection right after its span (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'B3', start: 120, dur: 240 }, { note: 'C3', start: 360, dur: 120 }, { note: 'B4', start: 480, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // Marquee-select all three notes (cols 0..5, rows 0..24).
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 0 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 142, clientY: 300 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 142, clientY: 300 }));
+  ctrlD();
+  const starts = engine.byId.trk_a.clips[0].events.map(e => e.start).sort((a, b) => a - b);
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events.map(e => e.start).sort((a, b) => a - b);
+  // Span 600 - 120 = 480; copies land at 600/840/960.
+  return starts.length === 6 && starts[0] === 120 && starts[3] === 600 && starts[4] === 840 && starts[5] === 960
+    && undone.length === 3 && undone[0] === 120 && undone[2] === 480;
+});
+
+check('Ctrl+D duplicates only the marquee-selected notes', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'B3', start: 120, dur: 240 }, { note: 'C3', start: 360, dur: 120 }, { note: 'B4', start: 480, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  // Select only B3 and C3 (rows 12..24, cols 0..3) — B4 (row 0) stays out.
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 144 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 100, clientY: 300 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 100, clientY: 300 }));
+  ctrlD();
+  const byNote = (n) => engine.byId.trk_a.clips[0].events.filter(e => e.note === n).length;
+  // B3/C3 span 360 -> copies at +360; B4 untouched.
+  return byNote('B3') === 2 && byNote('C3') === 2 && byNote('B4') === 1;
+});
+
+check('Ctrl+D is a no-op without a selection', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  ctrlD();
+  return engine.byId.trk_a.clips[0].events.length === 1;
+});
+
+// ---- piano roll legato UI (backlog #36) ------------------------------------
+check('legatoEvents extends a note to the start of the next one', () => {
+  const out = legatoEvents([{ note: 'C4', start: 0, dur: 120 }, { note: 'D4', start: 240, dur: 120 }]);
+  return out.length === 2 && out[0].dur === 240 && out[1].dur === 120;
+});
+
+check('legatoEvents never shortens an overlapping note', () => {
+  const out = legatoEvents([{ note: 'C4', start: 0, dur: 480 }, { note: 'D4', start: 240, dur: 120 }]);
+  return out[0].dur === 480 && out[0].note === 'C4';
+});
+
+check('legatoEvents extends equal-start notes to the next strictly-greater start', () => {
+  const out = legatoEvents([{ note: 'C4', start: 0, dur: 120 }, { note: 'E4', start: 0, dur: 120 }, { note: 'D4', start: 480, dur: 120 }]);
+  return out[0].dur === 480 && out[1].dur === 480 && out[2].dur === 120;
+});
+
+check('legatoEvents leaves the last note and unchanged events by reference', () => {
+  const a = { note: 'C4', start: 0, dur: 120 };
+  const b = { note: 'D4', start: 240, dur: 120 };
+  const out = legatoEvents([a, b]);
+  const solo = { note: 'C4', start: 0, dur: 480 };
+  const outSolo = legatoEvents([solo]);
+  return out[0] !== a && out[0].dur === 240 && out[1] === b && outSolo[0] === solo;
+});
+
+function lBtn(container) {
+  return container.querySelector('.pr-l-btn');
+}
+
+check('legato row renders a label and an L button (backlog #36)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  return !!lBtn(container)
+    && container.querySelector('.pr-l-name').textContent === 'legato'
+    && lBtn(container).textContent === 'L';
+});
+
+check('L extends each note to the next one (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }, { note: 'D4', start: 240, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  lBtn(container).click();
+  const durs = engine.byId.trk_a.clips[0].events.map(e => e.dur).sort((x, y) => x - y);
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events.map(e => e.dur).sort((x, y) => x - y);
+  return durs[0] === 120 && durs[1] === 240 && undone[0] === 120 && undone[1] === 120;
+});
+
+check('L applies only to the marquee selection', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }, { note: 'D4', start: 240, dur: 120 }, { note: 'E4', start: 480, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 132 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 64, clientY: 145 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 64, clientY: 145 }));
+  lBtn(container).click();
+  const durs = engine.byId.trk_a.clips[0].events.map(e => e.dur);
+  return durs[0] === 240 && durs[1] === 120 && durs[2] === 120;
+});
+
+check('L is a no-op when no clip is selected', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({ container, engine: prEngine([]), transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  lBtn(container).click();
+  return !!container.querySelector('.pr-empty');
+});
+
+// ---- piano roll fixed length UI (backlog #37) -------------------------------
+check('fixedLengthDur returns the active snap grid step in ticks', () => {
+  return fixedLengthDur(480, 1) === 120 && fixedLengthDur(480, 2) === 240 && fixedLengthDur(480, 4) === 480 && fixedLengthDur(960, 2) === 480;
+});
+
+check('fixedLengthEvents sets every duration to the grid step (unchanged ones by reference)', () => {
+  const a = { note: 'C4', start: 0, dur: 240 };
+  const b = { note: 'D4', start: 240, dur: 120 };
+  const out = fixedLengthEvents([a, b], { ppq: 480, grid: 1 });
+  const same = fixedLengthEvents([a], { ppq: 480, grid: 2 });
+  return out[0] !== a && out[0].dur === 120 && out[1] === b && same[0] === a;
+});
+
+function fBtn(container) {
+  return container.querySelector('.pr-f-btn');
+}
+
+check('fixed length row renders a label and an F button (backlog #37)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  return !!fBtn(container)
+    && container.querySelector('.pr-f-name').textContent === 'fixed len'
+    && fBtn(container).textContent === 'F';
+});
+
+check('F snaps note durations to the active snap grid (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 240 }, { note: 'D4', start: 240, dur: 120 }] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-snap-btn[data-v="2"]').click();
+  fBtn(container).click();
+  const durs = engine.byId.trk_a.clips[0].events.map(e => e.dur).sort((x, y) => x - y);
+  history.undo();
+  const undone = engine.byId.trk_a.clips[0].events.map(e => e.dur).sort((x, y) => x - y);
+  return durs[0] === 240 && durs[1] === 240 && undone[0] === 120 && undone[1] === 240;
+});
+
+check('F applies only to the marquee selection', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 240 }, { note: 'D4', start: 240, dur: 240 }, { note: 'E4', start: 480, dur: 120 }] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 132 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 64, clientY: 145 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 64, clientY: 145 }));
+  fBtn(container).click();
+  const durs = engine.byId.trk_a.clips[0].events.map(e => e.dur);
+  // Snap is 1/16 (120): only the selected C4 snaps down; D4 (240, unselected) keeps its length.
+  return durs[0] === 120 && durs[1] === 240 && durs[2] === 120;
+});
+
+check('F is a no-op when no clip is selected', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({ container, engine: prEngine([]), transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  fBtn(container).click();
+  return !!container.querySelector('.pr-empty');
+});
+
+// ---- piano roll humanize UI (backlog #39) ----------------------------------
+check('humanizeStart offsets a start by up to ±timing% of the step', () => {
+  // random() 1 → full positive offset; 0 → full negative.
+  return humanizeStart(240, { step: 120, timing: 100, random: () => 1 }) === 360
+    && humanizeStart(240, { step: 120, timing: 50, random: () => 0 }) === 180;
+});
+
+check('humanizeStart never goes below 0', () => {
+  return humanizeStart(0, { step: 120, timing: 100, random: () => 0 }) === 0;
+});
+
+check('humanizeStart with timing 0 leaves the start untouched', () => {
+  return humanizeStart(240, { step: 120, timing: 0, random: () => 1 }) === 240;
+});
+
+check('humanizeVelocity clamps into 1..127 and honors amount 0', () => {
+  return humanizeVelocity(100, { amount: 20, random: () => 1 }) === 120
+    && humanizeVelocity(127, { amount: 50, random: () => 1 }) === 127
+    && humanizeVelocity(10, { amount: 50, random: () => 0 }) === 1
+    && humanizeVelocity(100, { amount: 0, random: () => 1 }) === 100
+    && humanizeVelocity(undefined, { amount: 20, random: () => 1 }) === undefined;
+});
+
+check('humanizeEvents applies timing and velocity to events', () => {
+  const out = humanizeEvents([{ note: 'C4', start: 0, dur: 120, velocity: 100 }],
+    { ppq: 480, grid: 1, timing: 100, velocity: 40, random: () => 1 });
+  return out.length === 1 && out[0] !== undefined && out[0].start === 120 && out[0].velocity === 127;
+});
+
+check('humanizeEvents keeps unchanged events by reference', () => {
+  // random() 0.5 → zero offsets for both start and velocity.
+  const a = { note: 'C4', start: 240, dur: 120, velocity: 100 };
+  const b = { note: 'D4', start: 360, dur: 120 }; // no velocity — untouched by amount 20
+  const out = humanizeEvents([a, b], { ppq: 480, grid: 1, timing: 100, velocity: 20, random: () => 0.5 });
+  return out[0] === a && out[1] === b;
+});
+
+function hBtn(container) {
+  return container.querySelector('.pr-h-btn');
+}
+
+check('humanize row renders a label, inputs and an H button (backlog #39)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const timing = container.querySelector('.pr-h-timing');
+  const vel = container.querySelector('.pr-h-vel');
+  return !!hBtn(container)
+    && container.querySelector('.pr-h-name').textContent === 'humanize'
+    && hBtn(container).textContent === 'H'
+    && timing.value === '30' && vel.value === '20';
+});
+
+check('H humanizes note starts/velocities (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120, velocity: 100 },
+    { note: 'D4', start: 240, dur: 120, velocity: 90 },
+    { note: 'E4', start: 480, dur: 120, velocity: 80 },
+  ] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-h-timing').value = '100';
+  container.querySelector('.pr-h-vel').value = '127';
+  const snap = () => JSON.stringify(engine.byId.trk_a.clips[0].events.map(e => [e.start, e.velocity]));
+  const before = snap();
+  hBtn(container).click();
+  const after = snap();
+  history.undo();
+  const undone = snap();
+  return before !== after && before === undone && engine.byId.trk_a.clips[0].events.length === 3;
+});
+
+check('H applies only to the marquee selection', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120, velocity: 100 },
+    { note: 'D4', start: 240, dur: 120, velocity: 100 },
+    { note: 'E4', start: 480, dur: 120, velocity: 100 },
+  ] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-h-timing').value = '100';
+  container.querySelector('.pr-h-vel').value = '127';
+  const body = container.querySelector('.pr-body');
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 34, clientY: 132 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 64, clientY: 145 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 64, clientY: 145 }));
+  hBtn(container).click();
+  const evs = engine.byId.trk_a.clips[0].events;
+  const sel = evs.find(e => e.note === 'C4');
+  const untouched = evs.filter(e => e.note !== 'C4');
+  return sel && (sel.start !== 0 || sel.velocity !== 100)
+    && untouched.every(e => e.start === 240 || e.start === 480) && untouched.every(e => e.velocity === 100);
+});
+
+check('H is a no-op when no clip is selected', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({ container, engine: prEngine([]), transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  hBtn(container).click();
+  return !!container.querySelector('.pr-empty');
+});
+
+// ---- preview (backlog #40) --------------------------------------------------
+check('previewEvents schedules each event at its musical offset', () => {
+  const calls = [];
+  const n = previewEvents([
+    { note: 'C4', start: 0, dur: 120, velocity: 90 },
+    { note: 'D4', start: 240, dur: 240 },
+  ], { bpm: 120, ppq: 480, now: 1, schedule: (note, vel, durSec, when) => calls.push([note, vel, durSec, when]) });
+  // tps = (120/60)*480 = 960; lead 0.06.
+  return n === 2
+    && calls[0][0] === 'C4' && calls[0][1] === 90 && near(calls[0][2], 120 / 960) && near(calls[0][3], 1.06)
+    && calls[1][0] === 'D4' && calls[1][1] === 100 && near(calls[1][2], 240 / 960) && near(calls[1][3], 1.31);
+});
+
+check('previewEvents falls back to a sixteenth for non-positive durations', () => {
+  const calls = [];
+  previewEvents([{ note: 'E4', start: 480, dur: 0 }], { schedule: (note, vel, durSec) => calls.push([note, vel, durSec]) });
+  return calls.length === 1 && calls[0][2] === 0.125; // ppq/4 = 120 ticks at tps 960
+});
+
+check('previewEvents scales with tempo', () => {
+  const calls = [];
+  previewEvents([{ note: 'C4', start: 480, dur: 240 }], { bpm: 60, schedule: (n2, v, d, w) => calls.push([d, w]) });
+  return near(calls[0][0], 0.5) && near(calls[0][1], 0.06 + 1); // tps 480 at bpm 60
+});
+
+check('previewEvents tolerates empty input and a missing schedule', () => {
+  return previewEvents([], { schedule: () => {} }) === 0
+    && previewEvents(null, { schedule: () => {} }) === 0
+    && previewEvents([{ note: 'C4', start: 0, dur: 120 }], {}) === 0;
+});
+
+function prevBtn(container, cls) {
+  return container.querySelector('.' + cls);
+}
+
+// An engine fixture that records auditionNote calls for preview assertions.
+function prevEngine(clips) {
+  const engine = prEngine(clips);
+  engine.auditionCalls = [];
+  engine.auditionNote = (trackId, note, vel, durSec, when) => {
+    engine.auditionCalls.push({ trackId, note, vel, durSec, when });
+  };
+  return engine;
+}
+
+check('every operation row has a ▶ preview button (backlog #40)', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  return ['pr-q-prev', 'pr-t-prev', 'pr-l-prev', 'pr-f-prev', 'pr-h-prev']
+    .every(cls => prevBtn(container, cls) && prevBtn(container, cls).textContent === '▶');
+});
+
+check('Q ▶ previews quantized starts without committing', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [
+    { note: 'C4', start: 90, dur: 120 },
+    { note: 'D4', start: 330, dur: 120 },
+  ] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  prevBtn(container, 'pr-q-prev').click();
+  const whens = engine.auditionCalls.map(c => c.when);
+  // Arranged clip: no grid fold; snap 1/16 (step 120), strength 100 → 90→120, 330→360.
+  return engine.auditionCalls.length === 2
+    && engine.auditionCalls.every(c => c.trackId === 'trk_a')
+    && near(whens[0], 0.06 + 120 / 960, 1e-9) && near(whens[1], 0.06 + 360 / 960, 1e-9)
+    && engine.byId.trk_a.clips[0].events[0].start === 90
+    && engine.byId.trk_a.clips[0].events[1].start === 330;
+});
+
+check('T ▶ previews transposed pitches without committing', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [
+    { note: 'C4', start: 0, dur: 120 },
+  ] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-t-semi').value = '2';
+  prevBtn(container, 'pr-t-prev').click();
+  return engine.auditionCalls.length === 1 && engine.auditionCalls[0].note === 'D4'
+    && engine.byId.trk_a.clips[0].events[0].note === 'C4';
+});
+
+check('H ▶ on the loop clip sounds the folded grid (what commit would produce)', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
+    { note: 'C4', start: 130, dur: 120, velocity: 100 },
+    { note: 'D4', start: 250, dur: 120, velocity: 100 },
+  ] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-h-timing').value = '5'; // ±6 ticks — stays inside each step
+  container.querySelector('.pr-h-vel').value = '0';
+  prevBtn(container, 'pr-h-prev').click();
+  // The commit folds starts into the 16-step grid, so the preview must sound
+  // gridded starts (multiples of 120 ticks) even though humanize moved them.
+  const offsets = engine.auditionCalls.map(c => Math.round((c.when - 0.06) * 960));
+  return engine.auditionCalls.length === 2
+    && offsets.every(o => o % 120 === 0)
+    && offsets.includes(120) && offsets.includes(240)
+    && engine.byId.trk_a.clips[0].events[0].start === 130;
+});
+
+check('▶ previews are a no-op when no clip is selected', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  ['pr-q-prev', 'pr-t-prev', 'pr-l-prev', 'pr-f-prev', 'pr-h-prev'].forEach(cls => prevBtn(container, cls).click());
+  return engine.auditionCalls.length === 0 && !!container.querySelector('.pr-empty');
+});
+
+// ---- step input (backlog #42) ----------------------------------------------
+function pressKey(key, opts) {
+  window.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key }, opts || {})));
+}
+
+check('STEP button renders in the piano roll controls (backlog #42)', () => {
+  const container = document.createElement('div');
+  createPianoRoll({
+    container,
+    engine: prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  const btn = container.querySelector('.pr-step-btn');
+  return !!btn && btn.textContent === 'STEP' && !btn.classList.contains('on');
+});
+
+check('STEP: typing Z then X inserts C3@0 and D3@120 and advances the cursor', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-step-btn').click();
+  pressKey('z');
+  pressKey('x');
+  const evs = engine.byId.trk_a.clips[0].events;
+  return evs.length === 2
+    && evs[0].note === 'C3' && evs[0].start === 0 && evs[0].dur === 120 && evs[0].velocity === 100
+    && evs[1].note === 'D3' && evs[1].start === 120 && evs[1].dur === 120;
+});
+
+check('STEP: each typed note auditions as a self-terminating preview', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-step-btn').click();
+  pressKey('q'); // C4
+  return engine.auditionCalls.length === 1
+    && engine.auditionCalls[0].note === 'C4'
+    && engine.auditionCalls[0].vel === 100
+    && near(engine.auditionCalls[0].durSec, 0.125, 1e-9);
+});
+
+check('STEP: inserted notes are undoable one per keypress', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-step-btn').click();
+  pressKey('z');
+  pressKey('x');
+  history.undo();
+  if (engine.byId.trk_a.clips[0].events.length !== 1) return false;
+  history.undo();
+  return engine.byId.trk_a.clips[0].events.length === 0;
+});
+
+check('STEP: ArrowRight moves the insert cursor', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-step-btn').click();
+  pressKey('ArrowRight');
+  pressKey('ArrowRight');
+  pressKey('z');
+  const evs = engine.byId.trk_a.clips[0].events;
+  return evs.length === 1 && evs[0].note === 'C3' && evs[0].start === 240;
+});
+
+check('STEP: snap step scales both duration and advance (1/8 → 240 ticks)', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-snap-btn[data-v="2"]').click(); // 1/8
+  container.querySelector('.pr-step-btn').click();
+  pressKey('z');
+  pressKey('w'); // D4 — next 1/8 slot
+  const evs = engine.byId.trk_a.clips[0].events;
+  return evs.length === 2
+    && evs[0].start === 0 && evs[0].dur === 240
+    && evs[1].note === 'D4' && evs[1].start === 240 && evs[1].dur === 240;
+});
+
+check('STEP: Backspace erases under the cursor and steps back', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-step-btn').click();
+  pressKey('z');
+  pressKey('x');
+  pressKey('Backspace');
+  const evs = engine.byId.trk_a.clips[0].events;
+  return evs.length === 1 && evs[0].note === 'C3' && evs[0].start === 0;
+});
+
+check('STEP: Esc exits step mode and further keys do nothing', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const btn = container.querySelector('.pr-step-btn');
+  btn.click();
+  pressKey('Escape');
+  if (btn.classList.contains('on')) return false;
+  if (container.querySelector('.pr-cursor')) return false;
+  pressKey('z');
+  return engine.byId.trk_a.clips[0].events.length === 0;
+});
+
+check('STEP: no-op without a selected clip', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([]);
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  pr.setSelection(null);
+  container.querySelector('.pr-step-btn').click();
+  pressKey('z');
+  return !container.querySelector('.pr-cursor')
+    && engine.byId.trk_a.clips.length === 0
+    && !!container.querySelector('.pr-empty');
+});
+
+check('STEP: keys typed into inputs are ignored', () => {
+  const container = document.createElement('div');
+  const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]);
+  createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
+  container.querySelector('.pr-step-btn').click();
+  const input = document.createElement('input');
+  input.type = 'text';
+  document.body.appendChild(input);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true }));
+  document.body.removeChild(input);
+  return engine.byId.trk_a.clips[0].events.length === 0;
 });
 
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;

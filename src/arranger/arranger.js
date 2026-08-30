@@ -36,6 +36,14 @@ export function createArranger({ container, engine, transport, history, markers,
   function primarySelection() {
     return anchor || (selection.length ? selection[selection.length - 1] : null);
   }
+  // Notify the host (e.g. the piano roll, backlog #25) whenever the selection
+  // changes so it can follow the selected clip.
+  function notifySelection() {
+    if (cfg.onSelectionChange) {
+      const p = primarySelection();
+      cfg.onSelectionChange(p ? { trackId: p.trackId, clipId: p.clipId } : null);
+    }
+  }
 
   el.classList.add('arranger');
 
@@ -106,7 +114,25 @@ export function createArranger({ container, engine, transport, history, markers,
   markerBtn.title = 'Add a marker at the playhead';
   markerBtn.addEventListener('click', () => addMarkerAtPlayhead());
 
-  toolbar.append(title, zoomOut, zoomLabel, zoomIn, addClip, splitBtn, dupBtn, loopBtn, markerBtn);
+  const loopToggle = document.createElement('button');
+  loopToggle.className = 'arranger-btn';
+  loopToggle.textContent = 'loop';
+  loopToggle.title = 'Toggle loop playback (loops the region between locators)';
+  loopToggle.addEventListener('click', () => {
+    transport.setLoopEnabled(!transport.loopEnabled);
+    render();
+  });
+
+  const endMarkerBtn = document.createElement('button');
+  endMarkerBtn.className = 'arranger-btn';
+  endMarkerBtn.textContent = '+ end';
+  endMarkerBtn.title = 'Set project end marker at the playhead';
+  endMarkerBtn.addEventListener('click', () => {
+    transport.setProjectEnd(playheadTicks);
+    render();
+  });
+
+  toolbar.append(title, zoomOut, zoomLabel, zoomIn, addClip, splitBtn, dupBtn, loopBtn, markerBtn, loopToggle, endMarkerBtn);
 
   // ---- scroll viewport + content -------------------------------------
   const scroll = document.createElement('div');
@@ -459,6 +485,12 @@ export function createArranger({ container, engine, transport, history, markers,
     const ruler = computeRuler(tempoMap, bars, { pxPerQuarter: zoom, ppq });
     const totalW = Math.max(400, (contentWidthTicks(tempoMap, bars) / ppq) * zoom);
 
+    // Sync loop toggle button state.
+    loopToggle.classList.toggle('on', !!transport.loopEnabled);
+    loopToggle.title = transport.loopEnabled
+      ? 'Loop is ON (click to disable) — ' + transport.loopStartTicks + '–' + transport.loopEndTicks + ' ticks'
+      : 'Toggle loop playback (loops the region between locators)';
+
     content.style.width = totalW + 'px';
     content.style.height = (rulerHeight + tracks.reduce((acc, tr) => acc + (laneHidden(tr, tracks) ? 0 : laneHeightOf(tr, tracks)), 0)) + 'px';
 
@@ -504,6 +536,80 @@ export function createArranger({ container, engine, transport, history, markers,
       flag.append(label, del);
       rulerEl.appendChild(flag);
     });
+
+    // ---- loop region (backlog #155) ----
+    // A shaded band on the ruler between loopStartTicks and loopEndTicks.
+    // Clicking the band toggles loop on/off; dragging the edges resizes.
+    if (transport.loopEnabled) {
+      const loopRegion = document.createElement('div');
+      loopRegion.className = 'arranger-loop-region';
+      const lx = ticksToX(transport.loopStartTicks, { pxPerQuarter: zoom, ppq });
+      const rx = ticksToX(transport.loopEndTicks, { pxPerQuarter: zoom, ppq });
+      loopRegion.style.left = lx + 'px';
+      loopRegion.style.width = (rx - lx) + 'px';
+      loopRegion.style.height = rulerHeight + 'px';
+      loopRegion.title = 'Loop: ' + transport.loopStartTicks + '–' + transport.loopEndTicks + ' ticks (click to disable)';
+      loopRegion.addEventListener('click', () => {
+        transport.setLoopEnabled(false);
+        render();
+      });
+
+      // Left edge drag handle.
+      const leftEdge = document.createElement('div');
+      leftEdge.className = 'arranger-loop-edge arranger-loop-edge-l';
+      loopRegion.appendChild(leftEdge);
+      leftEdge.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startVal = transport.loopStartTicks;
+        const onMove = (ev) => {
+          const dx = ev.clientX - startX;
+          const dtick = Math.round(dx / zoom * ppq);
+          const newStart = Math.max(0, Math.min(startVal + dtick, transport.loopEndTicks - 1));
+          transport.loopStartTicks = newStart;
+          render();
+        };
+        const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
+
+      // Right edge drag handle.
+      const rightEdge = document.createElement('div');
+      rightEdge.className = 'arranger-loop-edge arranger-loop-edge-r';
+      loopRegion.appendChild(rightEdge);
+      rightEdge.addEventListener('pointerdown', (e) => {
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startVal = transport.loopEndTicks;
+        const onMove = (ev) => {
+          const dx = ev.clientX - startX;
+          const dtick = Math.round(dx / zoom * ppq);
+          const newEnd = Math.max(transport.loopStartTicks + 1, startVal + dtick);
+          transport.loopEndTicks = newEnd;
+          render();
+        };
+        const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+      });
+
+      rulerEl.appendChild(loopRegion);
+    }
+
+    // ---- project end marker (backlog #155) ----
+    if (transport.projectEndTicks !== null) {
+      const endMarker = document.createElement('div');
+      endMarker.className = 'arranger-project-end';
+      endMarker.style.left = ticksToX(transport.projectEndTicks, { pxPerQuarter: zoom, ppq }) + 'px';
+      endMarker.style.height = rulerHeight + 'px';
+      endMarker.title = 'Project end: ' + transport.projectEndTicks + ' ticks (click to remove)';
+      endMarker.addEventListener('click', () => {
+        transport.setProjectEnd(null);
+        render();
+      });
+      rulerEl.appendChild(endMarker);
+    }
 
     // ---- lanes ----
     clearChildren(lanesEl);
@@ -730,6 +836,7 @@ export function createArranger({ container, engine, transport, history, markers,
 
     zoomLabel.textContent = zoom + ' px/beat';
     updatePlayhead();
+    notifySelection();
   }
 
   function updatePlayhead() {

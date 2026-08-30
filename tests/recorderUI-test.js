@@ -258,6 +258,89 @@ check('collapse toggle hides the grid row as an undoable command', () => {
   return engine.byId[id].collapsed === false;
 });
 
+check('track rows render an INS insert button', () => {
+  const row = [...container.querySelectorAll('.rec-track')].pop();
+  const ins = [...row.querySelectorAll('.rec-btn')].find(b => b.textContent === 'INS');
+  return !!ins;
+});
+
+check('INS click expands the insert editor panel', () => {
+  const row = [...container.querySelectorAll('.rec-track')].pop();
+  const ins = [...row.querySelectorAll('.rec-btn')].find(b => b.textContent === 'INS');
+  ins.click();
+  const panels = [...container.querySelectorAll('.rec-inserts')];
+  return panels.length === 1;
+});
+
+// The INS button toggles the panel; tests below need it open, so only click it
+// when the panel is not already rendered (re-renders keep the open state).
+function ensureInsPanel() {
+  if (!container.querySelector('.rec-inserts')) {
+    const row = [...container.querySelectorAll('.rec-track')].pop();
+    const ins = [...row.querySelectorAll('.rec-btn')].find(b => b.textContent === 'INS');
+    ins.click();
+  }
+}
+
+check('+ DLY adds a delay insert as an undoable command', () => {
+  ensureInsPanel();
+  const id = engine.tracks[engine.tracks.length - 1].id;
+  const before = engine.byId[id].inserts.length;
+  const panel = [...container.querySelectorAll('.rec-inserts')].pop();
+  const dly = [...panel.querySelectorAll('.rec-btn')].find(b => b.textContent === '+ DLY');
+  dly.click();
+  const after = engine.byId[id].inserts.length;
+  if (after !== before + 1 || engine.byId[id].inserts[before].type !== 'delay') return false;
+  if (!history.state().canUndo) return false;
+  history.undo();
+  return engine.byId[id].inserts.length === before;
+});
+
+check('+ RVB adds a reverb insert with a mix param', () => {
+  ensureInsPanel();
+  const id = engine.tracks[engine.tracks.length - 1].id;
+  const panel = [...container.querySelectorAll('.rec-inserts')].pop();
+  const rvb = [...panel.querySelectorAll('.rec-btn')].find(b => b.textContent === '+ RVB');
+  rvb.click();
+  const last = engine.byId[id].inserts[engine.byId[id].inserts.length - 1];
+  const insertsEl = [...container.querySelectorAll('.rec-insert')];
+  const rvbEl = insertsEl.find(x => x.querySelector('.rec-insert-name').textContent === 'reverb');
+  return last.type === 'reverb' && !!rvbEl && !!rvbEl.querySelector('.rec-insert-param');
+});
+
+check('insert param edits run as undoable commands', () => {
+  ensureInsPanel();
+  const id = engine.tracks[engine.tracks.length - 1].id;
+  let idx = engine.byId[id].inserts.findIndex(i => i.type === 'delay');
+  if (idx < 0) {
+    const panel = [...container.querySelectorAll('.rec-inserts')].pop();
+    const dly = [...panel.querySelectorAll('.rec-btn')].find(b => b.textContent === '+ DLY');
+    dly.click();
+    idx = engine.byId[id].inserts.findIndex(i => i.type === 'delay');
+  }
+  if (idx < 0) return false;
+  const before = engine.byId[id].inserts[idx].params.mix;
+  const delayEl = [...container.querySelectorAll('.rec-insert')].find(x => x.querySelector('.rec-insert-name').textContent === 'delay');
+  const mixIn = [...delayEl.querySelectorAll('.rec-insert-param')].find(i => i.title === 'mix');
+  mixIn.value = '0.75';
+  mixIn.dispatchEvent(new Event('change'));
+  if (engine.byId[id].inserts[idx].params.mix !== 0.75) return false;
+  history.undo();
+  return engine.byId[id].inserts[idx].params.mix === before;
+});
+
+check('✕ removes an insert as an undoable command', () => {
+  ensureInsPanel();
+  const id = engine.tracks[engine.tracks.length - 1].id;
+  const before = engine.byId[id].inserts.length;
+  const insertEl = [...container.querySelectorAll('.rec-insert')].pop();
+  const del = insertEl.querySelector('.rec-insert-del');
+  del.click();
+  if (engine.byId[id].inserts.length !== before - 1) return false;
+  history.undo();
+  return engine.byId[id].inserts.length === before;
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';

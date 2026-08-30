@@ -3,6 +3,7 @@ export function createMockAudioParam(initialValue = 0) {
     _isParam: true,
     value: initialValue,
     _connections: new Set(),
+    _history: [],
     connect(dest) {
       if (dest) this._connections.add(dest);
     },
@@ -10,14 +11,16 @@ export function createMockAudioParam(initialValue = 0) {
       if (dest === undefined) this._connections.clear();
       else this._connections.delete(dest);
     },
-    setValueAtTime(v) {
+    setValueAtTime(v, at) {
       this.value = v;
+      this._history.push({ t: 'set', v, at });
     },
     setTargetAtTime(v) {
       this.value = v;
     },
-    linearRampToValueAtTime(v) {
+    linearRampToValueAtTime(v, at) {
       this.value = v;
+      this._history.push({ t: 'ramp', v, at });
     },
     exponentialRampToValueAtTime(v) {
       this.value = v;

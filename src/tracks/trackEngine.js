@@ -1,7 +1,8 @@
 import { TrackVoices } from './voiceEngine.js';
+import { defaultInsertParams } from './inserts.js';
 import {
   gridToClipEvents, rtToClipEvents, mergeClipEvents,
-  clipEventsToGrid, clipEventsToRt, stepTicks,
+  clipEventsToGrid, clipEventsToRt, stepTicks, ticksPerSecond,
 } from '../project/clipEvents.js';
 
 export const STEPS_PER_LOOP = 16;
@@ -38,9 +39,13 @@ export function defaultTrackConfig(cfg = {}) {
     volume: cfg.volume === undefined ? 0.85 : cfg.volume,
     gridNote: cfg.gridNote || 'C4',
     gridDur: cfg.gridDur || 1,
+    midiChannel: typeof cfg.midiChannel === 'number' ? cfg.midiChannel : null,
     grid: Array.isArray(cfg.grid) ? cfg.grid.slice() : Array(STEPS_PER_LOOP).fill(null),
     rt: Array.isArray(cfg.rt) ? cfg.rt.map(n => ({ ...n })) : [],
     clips: Array.isArray(cfg.clips) ? cfg.clips.map(c => ({ ...c })) : [],
+    inserts: Array.isArray(cfg.inserts)
+      ? cfg.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } }))
+      : [],
   };
 }
 
@@ -75,6 +80,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
     _cursorLoopAbs: 0,
     _armed: new Set(),
     _recBuffer: new Map(), // trackId -> open events [{note,start,dur:null}]
+    recordMode: config.recordMode || 'overdub', // 'overdub' | 'replace'
+    recordQuantize: config.recordQuantize || null, // { grid, strength, swing } | null
   };
 
   engine.stepDur = 60 / engine.bpm / NOTE_BEATS;
@@ -161,9 +168,55 @@ export function createTrackEngine(ctx, dest, config = {}) {
       if (k === 'adsr') t.adsr = { ...t.adsr, ...patch.adsr };
       else if (k === 'rt') t.rt = Array.isArray(patch.rt) ? patch.rt.map(n => ({ ...n })) : t.rt;
       else if (k === 'clips') t.clips = Array.isArray(patch.clips) ? patch.clips.map(c => ({ ...c })) : t.clips;
+      else if (k === 'inserts') t.inserts = Array.isArray(patch.inserts)
+        ? patch.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } }))
+        : (t.inserts || []);
       else t[k] = patch[k];
     });
     _applyAudibility();
+    if ('inserts' in patch && t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
+    _emitState();
+  };
+
+  // ---- insert devices (backlog #32) -----------------------------------
+  // Insert descriptors are plain data `{ id, type, params }` on the track;
+  // TrackVoices rebuilds its audio chain (`insertIn → inserts → trackGain`)
+  // whenever the list changes. `updateInsert` only touches params — the chain
+  // topology is unchanged, so the live device is updated in place.
+  engine.addInsert = (id, type, params) => {
+    const t = engine.byId[id];
+    if (!t) return null;
+    const insert = {
+      id: 'ins_' + Math.random().toString(36).slice(2, 8),
+      type,
+      params: { ...defaultInsertParams(type), ...(params || {}) },
+    };
+    t.inserts.push(insert);
+    if (t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
+    _emitState();
+    return insert;
+  };
+
+  engine.removeInsert = (id, index) => {
+    const t = engine.byId[id];
+    if (!t || !Array.isArray(t.inserts) || !t.inserts[index]) return false;
+    t.inserts.splice(index, 1);
+    if (t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
+    _emitState();
+    return true;
+  };
+
+  engine.updateInsert = (id, index, patch) => {
+    const t = engine.byId[id];
+    const ins = t && t.inserts && t.inserts[index];
+    if (!ins) return false;
+    Object.keys(patch || {}).forEach(k => {
+      if (k === 'id' || k === 'type') return;
+      ins.params[k] = patch[k];
+    });
+    if (t.voice && t.voice.applyInsert) t.voice.applyInsert(index);
+    _emitState();
+    return true;
   };
 
   // ---- mute / solo ------------------------------------------------------
@@ -218,6 +271,27 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!clip) return false;
     if (typeof patch.start === 'number') clip.start = Math.max(0, Math.round(patch.start));
     if (typeof patch.length === 'number') clip.length = Math.max(1, Math.round(patch.length));
+    _emitState();
+    return true;
+  };
+
+  // Replace a clip's note events (backlog #25, piano roll). Events are PPQ ticks
+  // relative to the clip start. For the loop clip (start 0) the events also feed
+  // the step grid / realtime scheduler, so they are re-quantized into `grid`
+  // (16-step) — the loop is inherently one bar of sixteenths, so this keeps the
+  // drawn notes lossless; realtime `rt` notes are folded into the grid. Editing
+  // an arranged (non-loop) clip never touches grid/rt — the linear scheduler
+  // plays its events directly.
+  engine.setClipEvents = (id, clipId, events) => {
+    const t = engine.byId[id];
+    const clip = t && t.clips.find(c => c.id === clipId);
+    if (!clip) return false;
+    clip.events = (events || []).map(ev => ({ ...ev })).sort((a, b) => (a.start || 0) - (b.start || 0));
+    const loop = t.clips.find(c => c.start === 0) || t.clips[0];
+    if (clip === loop) {
+      t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
+      t.rt = [];
+    }
     _emitState();
     return true;
   };
@@ -317,8 +391,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
       muted: t.muted, solo: t.solo, folder: t.folder || null, collapsed: !!t.collapsed,
       wave: t.wave, filterType: t.filterType, filterFreq: t.filterFreq, filterQ: t.filterQ,
       adsr: { ...t.adsr }, volume: t.volume, gridNote: t.gridNote, gridDur: t.gridDur,
+      midiChannel: typeof t.midiChannel === 'number' ? t.midiChannel : null,
       grid: t.grid.map(c => normalizeCell(c)), rt: t.rt.map(n => ({ ...n })),
       clips: t.clips.map(c => ({ ...c, events: (c.events || []).slice() })),
+      inserts: t.inserts.map(i => ({ id: i.id, type: i.type, params: { ...(i.params || {}) } })),
     };
   });
 
@@ -343,13 +419,16 @@ export function createTrackEngine(ctx, dest, config = {}) {
     activeTrackId: engine.activeTrackId,
   });
 
-  // ---- grid editing -----------------------------------------------------
-  // Grid cells are `{ note, dur }` (dur in steps) or null. `note` is a pitch
-  // name like "C4"; `dur` is note length in sixteenth-steps (default 1).
+// ---- grid editing -----------------------------------------------------
+  // Grid cells are `{ note, dur, vel }` or null. `note` is a pitch name like
+  // "C4"; `dur` is note length in sixteenth-steps (default 1); `vel` (0-127) is
+  // the note velocity the cell was derived from (piano roll, backlog #27).
   function normalizeCell(c) {
     if (!c) return null;
     if (typeof c === 'string') return { note: c, dur: 1 };
-    return { note: c.note, dur: typeof c.dur === 'number' && c.dur > 0 ? c.dur : 1 };
+    const out = { note: c.note, dur: typeof c.dur === 'number' && c.dur > 0 ? c.dur : 1 };
+    if (typeof c.vel === 'number') out.vel = c.vel;
+    return out;
   }
 
   engine.toggleGridStep = (id, step, note, dur) => {
@@ -391,6 +470,58 @@ export function createTrackEngine(ctx, dest, config = {}) {
   };
 
   // ---- transport --------------------------------------------------------
+  // Backlog #24: full-song playback. Besides the loop scheduler above, every
+  // clip except the loop mirror plays its events once at its absolute timeline
+  // position. Per-event `_scheduledLin` flags stop an event from being
+  // scheduled twice within one playback session; reset on every start.
+  engine._resetLinearPlayback = () => {
+    engine.tracks.forEach(t => {
+      (t.clips || []).forEach(c => (c.events || []).forEach(ev => delete ev._scheduledLin));
+    });
+  };
+
+  // Chase: fire noteOn for all sustained notes at the given absolute tick.
+  // Called after seek so notes that started before the seek point but haven't
+  // ended yet are re-triggered with a truncated duration.
+  engine.chaseToTick = (absTick) => {
+    if (!engine._playing) return;
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    const nowAbs = engine._playStartCtx + ((engine._nowMs() - engine._startMs) / 1000);
+    const loopLenTicks = STEPS_PER_LOOP * (engine.ppq / 4);
+    engine.tracks.forEach(t => {
+      if (engine.byId[t.id].enabled === false) return;
+      const loopClip = (t.clips || []).find(c => c.start === 0);
+      // Loop clip: check events against loop-relative position (ticks)
+      if (loopClip) {
+        const loopPosTicks = absTick % loopLenTicks;
+        (loopClip.events || []).forEach(ev => {
+          const evStart = typeof ev.start === 'number' ? ev.start : 0;
+          const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+          if (evStart <= loopPosTicks && evStart + evDur > loopPosTicks) {
+            const remainingTicks = (evStart + evDur) - loopPosTicks;
+            const durSec = remainingTicks / tps;
+            t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
+          }
+        });
+      }
+      // Arranged clips: check events against absolute position (ticks)
+      (t.clips || []).forEach(clip => {
+        if (clip === loopClip) return;
+        (clip.events || []).forEach(ev => {
+          const evStart = typeof ev.start === 'number' ? ev.start : 0;
+          const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+          const absStart = clip.start + evStart;
+          const absEnd = absStart + evDur;
+          if (absStart <= absTick && absEnd > absTick) {
+            const remainingTicks = absEnd - absTick;
+            const durSec = remainingTicks / tps;
+            t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
+          }
+        });
+      });
+    });
+  };
+
   engine.play = () => {
     _resumeIfNeeded();
     engine.recalcTempo();
@@ -402,6 +533,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._startMs = engine._nowMs();
     engine._playStartCtx = engine.ctx.currentTime + 0.03;
     engine._cursorLoopAbs = engine._playStartCtx;
+    engine._resetLinearPlayback();
     engine.tracks.forEach(t => {
       t.rt.forEach(ev => { ev._nextAbs = engine._playStartCtx + ev.start; });
     });
@@ -412,6 +544,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   engine.record = () => {
     if (!engine._armed.size && engine.activeTrackId) engine.armTrack(engine.activeTrackId, true);
+    if (engine.recordMode === 'replace') {
+      const ids = engine._armed.size ? [...engine._armed] : (engine.activeTrackId ? [engine.activeTrackId] : []);
+      ids.forEach(id => _clearLoopClip(engine.byId[id]));
+    }
     engine._recording = true;
     engine._recBuffer.clear();
     engine.tracks.forEach(t => t.rt.forEach(ev => delete ev._open));
@@ -482,6 +618,29 @@ export function createTrackEngine(ctx, dest, config = {}) {
     });
   };
 
+  // ---- piano roll audition (backlog #30) ----------------------------------
+  // Preview a note through one specific track's voice — the track the selected
+  // clip belongs to — bypassing the global live-note routing (active/armed
+  // tracks, monitor gating), so drawing and dragging in the piano roll always
+  // auditions the instrument being edited. Respects mute/solo audibility;
+  // `dur` (seconds) makes the note self-terminating (used when drawing);
+  // `when` (absolute ctx time) schedules ahead for one-pass previews (#40).
+  engine.auditionNote = (trackId, note, vel, dur, when) => {
+    _resumeIfNeeded();
+    const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
+    const t = engine.byId[trackId];
+    if (!t || !engine.isAudible(t.id)) return;
+    t.voice.noteOn(resolve(note), typeof when === 'number' ? when : engine.ctx.currentTime, dur, vel);
+  };
+
+  engine.auditionNoteOff = (trackId, note) => {
+    _resumeIfNeeded();
+    const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
+    const t = engine.byId[trackId];
+    if (!t) return;
+    t.voice.noteOff(resolve(note), engine.ctx.currentTime);
+  };
+
   function _emitNote(note) {
     if (engine.onNote) engine.onNote({ note, loopPos: engine._loopPos, loopCount: engine._loopCount });
   }
@@ -528,13 +687,46 @@ export function createTrackEngine(ctx, dest, config = {}) {
           if (dur > 0) committed.push({ note: e.note, start: e.start, dur });
         }
       });
-      if (committed.length) t.rt = committed;
+      if (committed.length) {
+        let out = committed;
+        if (engine.recordQuantize) {
+          const tps = (engine.bpm / 60) * engine.ppq;
+          const q = engine.recordQuantize;
+          out = committed.map(e => {
+            const qd = quantizeTick(e.start * tps, engine.ppq, q.grid, q.strength, q.swing);
+            return { ...e, start: qd / tps };
+          });
+        }
+        t.rt = out;
+      }
     });
     engine._recBuffer.clear();
     engine.tracks.forEach(syncLoopClip);
     if (engine._playing) {
       engine.tracks.forEach(t => t.rt.forEach(ev => { ev._nextAbs = engine._playStartCtx + (engine._loopCount * engine.loopDur) + ev.start; }));
     }
+  }
+
+  // Clear a track's loop clip (grid + realtime notes) so a REPLACE-mode record
+  // starts from an empty clip. Backlog #41.
+  function _clearLoopClip(t) {
+    if (!t) return;
+    t.grid = t.grid.map(() => null);
+    t.rt = [];
+    syncLoopClip(t);
+  }
+
+  // Snap a recorded note (in PPQ ticks) to the grid; mirrors quantizeStart from
+  // src/arranger/quantize.js but kept in the engine layer to avoid a downward
+  // import. Used by record quantization (#41) before the note lands on the clip.
+  function quantizeTick(start, ppq, grid, strength, swing) {
+    grid = grid > 0 ? grid : 1;
+    const step = Math.max(1, (ppq / 4) * grid);
+    let col = Math.round(start / step);
+    if (swing && col % 2 === 1) col += Math.max(0, Math.min(100, swing)) / 100;
+    const k = Math.max(0, Math.min(1, strength / 100));
+    const target = col * step;
+    return Math.max(0, start + (target - start) * k);
   }
 
   // ---- scheduler ------------------------------------------------------
@@ -563,9 +755,9 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const nowAbs = engine._playStartCtx + elapsed;
     const endAbs = nowAbs + 0.12;
 
-    const scheduleNoteOn = (t, note, timeAbs, durAbs) => {
+    const scheduleNoteOn = (t, note, timeAbs, durAbs, vel) => {
       if (engine.byId[t.id].enabled === false) return;
-      t.voice.noteOn(note, timeAbs, durAbs);
+      t.voice.noteOn(note, timeAbs, durAbs, vel);
     };
 
     // --- grid (cursor keeps monotonic advance across loops) ---
@@ -575,7 +767,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       const timeAbs = gridLoopAbs + engine._cursor * engine.stepDur;
       engine.tracks.forEach(t => {
         const cell = normalizeCell(t.grid[engine._cursor]);
-        if (cell) scheduleNoteOn(t, cell.note, timeAbs, engine.stepDur * Math.max(1, cell.dur) - 0.01);
+        if (cell) scheduleNoteOn(t, cell.note, timeAbs, engine.stepDur * Math.max(1, cell.dur) - 0.01, cell.vel);
       });
       if (engine.onGridStep) engine.onGridStep(engine._cursor, timeAbs);
       engine._cursor++;
@@ -598,17 +790,42 @@ export function createTrackEngine(ctx, dest, config = {}) {
           const timeAbs = ev._nextAbs;
           if (ev.dur > 0) {
             if (offWithin > 0.01) {
-              scheduleNoteOn(t, ev.note, timeAbs, offWithin);
+              scheduleNoteOn(t, ev.note, timeAbs, offWithin, ev.velocity);
             } else {
-              scheduleNoteOn(t, ev.note, timeAbs, undefined);
+              scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
               t.voice.noteOff(ev.note, timeAbs + Math.max(0.03, engine.loopDur - ev.start));
             }
           } else if (ev.dur === 0) {
-            scheduleNoteOn(t, ev.note, timeAbs, undefined);
+            scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
             t.voice.noteOff(ev.note, loopStart + engine.loopDur);
           }
           ev._nextAbs += engine.loopDur;
         }
+      });
+    });
+
+    // --- arranged clips (backlog #24): linear full-song playback ---------
+    // Every clip except the loop mirror (the one the grid/rt loop scheduler
+    // plays) sounds its events once, positioned at clip.start + ev.start ticks
+    // (constant tempo). Events are only scheduled once per play via the
+    // per-event _scheduledLin flag; late passes (timer jitter) catch up by
+    // scheduling into the past, which the Web Audio clock plays immediately.
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    engine.tracks.forEach(t => {
+      const loopClip = (t.clips || []).find(c => c.start === 0);
+      (t.clips || []).forEach(clip => {
+        if (clip === loopClip) return;
+        (clip.events || []).forEach(ev => {
+          if (ev._scheduledLin) return;
+          const absTicks = clip.start + (typeof ev.start === 'number' ? ev.start : 0);
+          const absSec = absTicks / tps;
+          if (absSec > elapsed + 0.12) return;
+          const timeAbs = engine._playStartCtx + absSec;
+          const durTicks = typeof ev.dur === 'number' ? ev.dur : 0;
+          if (durTicks > 0) scheduleNoteOn(t, ev.note, timeAbs, durTicks / tps, ev.velocity);
+          else scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
+          ev._scheduledLin = true;
+        });
       });
     });
   }

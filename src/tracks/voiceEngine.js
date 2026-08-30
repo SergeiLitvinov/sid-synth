@@ -1,18 +1,27 @@
 import { create } from '../oscillator/index.js';
 import { noteToFreq } from '../services/notes.js';
+import { createInsert } from './inserts.js';
 
 const VOICES_PER_TRACK = 8;
 
-function scheduleEnvelope(param, ctx, at, adsr) {
-  param.cancelScheduledValues(at);
-  param.setValueAtTime(0, at);
-  param.linearRampToValueAtTime(1, at + adsr.a);
-  param.linearRampToValueAtTime(adsr.s, at + adsr.a + adsr.d);
+// vel 0..1 scales the whole envelope (attack peak and sustain); the model
+// default velocity is 100, so absent velocity scales to 100/127.
+function velocityScale(vel) {
+  const v = typeof vel === 'number' ? vel : 100;
+  return Math.max(0, Math.min(1, v / 127));
 }
 
-function scheduleRelease(param, ctx, atEnd, adsr) {
+function scheduleEnvelope(param, ctx, at, adsr, vel) {
+  const scale = velocityScale(vel);
+  param.cancelScheduledValues(at);
+  param.setValueAtTime(0, at);
+  param.linearRampToValueAtTime(scale, at + adsr.a);
+  param.linearRampToValueAtTime(adsr.s * scale, at + adsr.a + adsr.d);
+}
+
+function scheduleRelease(param, ctx, atEnd, adsr, vel) {
   param.cancelScheduledValues(atEnd);
-  param.setValueAtTime(adsr.s, atEnd);
+  param.setValueAtTime(adsr.s * velocityScale(vel), atEnd);
   param.linearRampToValueAtTime(0.0001, atEnd + adsr.r);
   param.setValueAtTime(0, atEnd + adsr.r + 0.01);
 }
@@ -22,9 +31,14 @@ function resetVoice(param, ctx, at) {
   param.setValueAtTime(0, at);
 }
 
-// Independent voice path per track: osc → filter → env → trackGain → dest.
-// Overlapping notes on one track get distinct voices, so envelopes (ANSR)
-// behave like a real synth instead of retriggering one shared ADSR.
+// Independent voice path per track: osc → filter → env → insert chain → fader
+// (backlog #32). The device chain is SID instrument (the voices) → inserts →
+// fader: every voice's env feeds `insertIn`, the insert devices are chained
+// between `insertIn` and `trackGain` (the fader), and the fader feeds the
+// destination (master) — TrackVoices never connects straight to the master
+// when inserts are present. Overlapping notes on one track get distinct voices,
+// so envelopes (ANSR) behave like a real synth instead of retriggering one
+// shared ADSR.
 export class TrackVoices {
   constructor(ctx, track, destination) {
     this.ctx = ctx;
@@ -33,10 +47,13 @@ export class TrackVoices {
     this.trackGain.gain.value = 0.85;
     this.trackGain.connect(destination);
     this.setGain(this.track && this.track.volume !== undefined ? this.track.volume : 0.85);
+    this.insertIn = ctx.createGain();
+    this.inserts = []; // live insert devices, chained insertIn -> ... -> trackGain
     this.voices = [];
     for (let i = 0; i < VOICES_PER_TRACK; i++) {
       this.voices.push(this._createVoice());
     }
+    this.rebuildChain();
   }
 
   _wave() {
@@ -67,9 +84,39 @@ export class TrackVoices {
     const osc = create(this._wave(), ctx, noteToFreq('C4'));
     osc.connect(usesFilter ? filter : env);
     if (usesFilter) filter.connect(env);
-    env.connect(this.trackGain);
+    env.connect(this.insertIn);
 
     return { osc, filter, env, wave: this._wave(), usesFilter, _started: false, activeNote: null, busyUntil: 0 };
+  }
+
+  // Rebuild the insert chain from `this.track.inserts`: voices' `insertIn`
+  // feeds the first insert, each insert's output feeds the next, and the last
+  // output feeds the fader (`trackGain`). Unknown insert types are skipped, so
+  // the chain stays valid even for forward-incompatible saved tracks.
+  rebuildChain() {
+    try { this.insertIn.disconnect(); } catch (e) {}
+    this.inserts.forEach(ins => { try { ins.disconnect(); } catch (e) {} });
+    this.inserts = [];
+    const specs = (this.track && this.track.inserts) || [];
+    let prev = this.insertIn;
+    specs.forEach(spec => {
+      const dev = createInsert(this.ctx, spec);
+      if (!dev) return;
+      try { prev.connect(dev.input); } catch (e) {}
+      prev = dev.output;
+      this.inserts.push(dev);
+    });
+    try { prev.connect(this.trackGain); } catch (e) {}
+  }
+
+  // Push a live insert's descriptor params into its audio device.
+  applyInsert(index) {
+    const spec = this.track && this.track.inserts && this.track.inserts[index];
+    const dev = this.inserts[index];
+    if (!spec || !dev || !dev.setParam) return;
+    Object.keys(spec.params || {}).forEach(k => {
+      try { dev.setParam(k, spec.params[k]); } catch (e) {}
+    });
   }
 
   _ensureStarted(v) {
@@ -148,17 +195,18 @@ export class TrackVoices {
     }
   }
 
-  noteOn(note, at, dur) {
+  noteOn(note, at, dur, vel) {
     const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
     const noteName = resolve(note);
     const v = this._acquireVoice(at);
     this._armOsc(v, noteName, at);
     this._ensureStarted(v);
-    scheduleEnvelope(v.env.gain, this.ctx, at, this.track.adsr);
+    v.velScale = velocityScale(vel);
+    scheduleEnvelope(v.env.gain, this.ctx, at, this.track.adsr, vel);
     v.activeNote = noteName;
     if (dur) {
       const end = at + Math.max(0.03, dur);
-      scheduleRelease(v.env.gain, this.ctx, end, this.track.adsr);
+      scheduleRelease(v.env.gain, this.ctx, end, this.track.adsr, vel);
       v.busyUntil = end + this.track.adsr.r + 0.01;
       v.activeNote = null;
     } else {
@@ -171,9 +219,10 @@ export class TrackVoices {
     const noteName = resolve(note);
     const v = this.voices.find(x => x.activeNote === noteName);
     if (!v) return;
-    scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr);
+    scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr, v.velScale);
     v.busyUntil = at + this.track.adsr.r + 0.01;
     v.activeNote = null;
+    v.velScale = undefined;
   }
 
   allOff(at) {
@@ -206,6 +255,8 @@ export class TrackVoices {
         v.env.disconnect();
       });
     } catch (e) {}
+    try { this.insertIn.disconnect(); } catch (e) {}
+    this.inserts.forEach(ins => { try { ins.disconnect(); } catch (e) {} });
     this.trackGain.disconnect();
   }
 }

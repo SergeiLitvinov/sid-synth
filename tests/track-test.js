@@ -35,8 +35,10 @@ function makeFixture(bpm = 120) {
   const track = engine.addTrack({ name: 'T1', id: 'trk_a' });
   engine.activeTrackId = 'trk_a';
   const spy = [];
-  const orig = track.voice.noteOn.bind(track.voice);
-  track.voice.noteOn = (note, at, dur) => { spy.push({ note, at, dur }); orig(note, at, dur); };
+  const origOn = track.voice.noteOn.bind(track.voice);
+  track.voice.noteOn = (note, at, dur, vel) => { spy.push({ note, at, dur, vel, type: 'on' }); origOn(note, at, dur, vel); };
+  const origOff = track.voice.noteOff.bind(track.voice);
+  track.voice.noteOff = (note, at) => { spy.push({ note, at, type: 'off' }); origOff(note, at); };
   const driver = {
     engine, track, ctx, spy,
     set(ms) { now = ms; },
@@ -321,6 +323,64 @@ check('non-loop clip events are left untouched by the loop sync', () => {
   return clip.events.length === 1 && clip.events[0].note === 'B2';
 });
 
+check('setClipEvents on the loop clip re-derives grid and clears rt', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120 }, { note: 'D4', start: 360, dur: 120 }]);
+  return d.track.grid[0] && d.track.grid[0].note === 'C4'
+    && d.track.grid[3] && d.track.grid[3].note === 'D4' && d.track.grid[3].dur === 1
+    && d.track.rt.length === 0;
+});
+
+check('setClipEvents on a non-loop clip does not touch grid/rt', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.addClip('trk_a', { id: 'clip_n', start: 1920, length: 1920 });
+  d.engine.setClipEvents('trk_a', 'clip_n', [{ note: 'A3', start: 0, dur: 240 }]);
+  const clip = d.track.clips.find(c => c.id === 'clip_n');
+  const loop = d.track.clips.find(c => c.start === 0);
+  return clip.events.length === 1 && clip.events[0].note === 'A3' && clip.events[0].dur === 240
+    && d.track.grid.every(c => c === null) && d.track.rt.length === 0 && loop.events.length === 0;
+});
+
+check('setClipEvents sorts and copies events (no caller aliasing)', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const events = [{ note: 'G4', start: 1200, dur: 120 }, { note: 'C4', start: 0, dur: 120 }];
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, events);
+  events.push({ note: 'E4', start: 480, dur: 120 });
+  const clip = d.track.clips.find(c => c.start === 0);
+  return clip.events.length === 2 && clip.events[0].start === 0 && clip.events[1].start === 1200;
+});
+
+check('setClipEvents on a missing clip is a no-op', () => {
+  const d = makeFixture(120);
+  return d.engine.setClipEvents('trk_a', 'nope', [{ note: 'C4', start: 0, dur: 120 }]) === false;
+});
+
+check('a grid edit after a piano-roll edit re-syncs loop events', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120 }]);
+  d.engine.toggleGridStep('trk_a', 8, 'E4');
+  const clip = d.track.clips.find(c => c.start === 0);
+  return clip.events.some(e => e.note === 'E4' && e.start === 8 * 120)
+    && d.track.grid[8] && d.track.grid[8].note === 'E4';
+});
+
+check('setClipEvents preserves velocity through the loop grid round-trip', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120, velocity: 64 }]);
+  // setClipEvents re-quantizes into grid (cell gains vel); the restore path
+  // (addTrack) and getTracks re-derive events via syncLoopClip -> gridToClipEvents,
+  // so the velocity survives the round-trip.
+  const track = d.engine.getTracks().find(t => t.id === 'trk_a');
+  const clip = track.clips.find(c => c.start === 0);
+  return d.track.grid[0].vel === 64
+    && clip.events.length === 1 && clip.events[0].velocity === 64;
+});
+
 check('addClip without a start defaults to the loop position', () => {
   const d = makeFixture(120);
   const clip = d.engine.addClip('trk_a', {});
@@ -532,6 +592,464 @@ check('visibleTracks hides children of a collapsed folder', () => {
   d.engine.updateTrack('trk_a', { collapsed: true });
   const collapsedVisible = d.engine.visibleTracks().map(t => t.id).sort().join(',') === 'trk_a,trk_c';
   return allVisible && collapsedVisible;
+});
+
+// ---- full-song playback of arranged clips (backlog #24) -------------------
+// At bpm 120 / ppq 480 one tick is 1/960 s; a clip at start 1920 ticks starts
+// 2.0s after play (audio time 0.03 + 2.0 = 2.03). The lookahead is 0.12s, so
+// an event enters the scheduling window when elapsed > absSec - 0.12.
+// Like the app, a track gets a loop clip at start 0 first (the grid/rt mirror);
+// arranged clips land later on the timeline.
+function songFixture(bpm = 120) {
+  const d = makeFixture(bpm);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  return d;
+}
+
+check('loop clip is not scheduled twice by the linear scheduler', () => {
+  const d = makeFixture(120);
+  d.engine.toggleGridStep('trk_a', 0, 'C4');
+  d.play();
+  d.advanceAndTick(100); // elapsed 0.1s
+  return d.spy.filter(s => s.note === 'C4').length === 1;
+});
+
+check('arranged clip plays its events once at the right timeline times', () => {
+  const d = songFixture(120);
+  d.engine.addClip('trk_a', {
+    start: 1920, length: 1920,
+    events: [{ note: 'A3', start: 0, dur: 240 }, { note: 'B3', start: 240, dur: 120 }],
+  });
+  d.play();
+  d.set(1500); d.engine._tick(); // before the clip start -> nothing
+  const earlyA = d.spy.filter(s => s.note === 'A3').length;
+  const earlyB = d.spy.filter(s => s.note === 'B3').length;
+  d.set(1900); d.engine._tick(); // A3 in window, B3 (at 2.25s) not yet
+  const a = d.spy.filter(s => s.note === 'A3');
+  const bAt1900 = d.spy.filter(s => s.note === 'B3').length;
+  d.set(2600); d.engine._tick(); // B3 now in window
+  const b = d.spy.filter(s => s.note === 'B3');
+  d.advanceAndTick(600); // later passes must not reschedule
+  const aAfter = d.spy.filter(s => s.note === 'A3').length;
+  const bAfter = d.spy.filter(s => s.note === 'B3').length;
+  const aOk = a.length === 1 && Math.abs(a[0].at - 2.03) < 1e-6 && Math.abs(a[0].dur - 0.25) < 1e-6;
+  const bOk = b.length === 1 && Math.abs(b[0].at - 2.28) < 1e-6 && Math.abs(b[0].dur - 0.125) < 1e-6;
+  return earlyA === 0 && earlyB === 0 && aOk && bAt1900 === 0 && bOk && aAfter === 1 && bAfter === 1;
+});
+
+check('enabled:false track skips arranged clips', () => {
+  const d = songFixture(120);
+  d.track.enabled = false;
+  d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'A3', start: 0, dur: 240 }] });
+  d.play();
+  d.set(1900); d.engine._tick();
+  return d.spy.filter(s => s.note === 'A3').length === 0;
+});
+
+check('arranged clips replay after stop and restart', () => {
+  const d = songFixture(120);
+  d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'A3', start: 0, dur: 240 }] });
+  d.play();
+  d.set(2000); d.engine._tick();
+  const first = d.spy.filter(s => s.note === 'A3').length;
+  d.engine.stop();
+  d.play();
+  d.set(3900); d.engine._tick(); // elapsed 1.9s after the second start
+  const second = d.spy.filter(s => s.note === 'A3').length;
+  return first === 1 && second === 2;
+});
+
+check('arranged clip with no duration schedules an open note', () => {
+  const d = songFixture(120);
+  d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'A3', start: 0 }] });
+  d.play();
+  d.set(1900); d.engine._tick();
+  const hit = d.spy.find(s => s.note === 'A3');
+  return !!hit && Math.abs(hit.at - 2.03) < 1e-6 && hit.dur === undefined;
+});
+
+// ---- audible velocity (backlog #28) ----------------------------------------
+// Velocity (0-127, model default 100) scales the per-voice envelope: attack peak
+// and sustain are multiplied by vel/127. The mock AudioParam records every
+// scheduled value into `_history`, so the tests assert the scaled attack ramp
+// and the scaled sustain ramp actually reached the envelope gain param.
+function envHistory(d, idx) {
+  return (d.track.voice.voices[idx] || {}).env.gain._history || [];
+}
+function sawRamp(hist, v) {
+  return hist.some(h => h.t === 'ramp' && Math.abs(h.v - v) < 1e-6);
+}
+check('grid cell velocity scales the voice envelope gain', () => {
+  const d = makeFixture(120);
+  d.track.grid[0] = { note: 'C4', dur: 1, vel: 64 };
+  d.play();
+  d.advanceAndTick(100); // step 0 plays at 0.03s, well inside the lookahead
+  const hit = d.spy.find(s => s.note === 'C4');
+  const hist = envHistory(d, 0);
+  return !!hit && hit.vel === 64 && sawRamp(hist, 64 / 127) && sawRamp(hist, 0.7 * (64 / 127));
+});
+
+check('grid cells without velocity default to velocity 100', () => {
+  const d = makeFixture(120);
+  d.engine.toggleGridStep('trk_a', 0, 'C4');
+  d.play();
+  d.advanceAndTick(100);
+  const hit = d.spy.find(s => s.note === 'C4');
+  const hist = envHistory(d, 0);
+  return !!hit && hit.vel === undefined && sawRamp(hist, 100 / 127) && sawRamp(hist, 0.7 * (100 / 127));
+});
+
+check('arranged clip event velocity reaches the voice and scales gain', () => {
+  const d = songFixture(120);
+  d.engine.addClip('trk_a', {
+    start: 1920, length: 1920,
+    events: [{ note: 'A3', start: 0, dur: 240, velocity: 32 }, { note: 'B3', start: 240, dur: 120, velocity: 127 }],
+  });
+  d.play();
+  d.set(1900); d.engine._tick(); // A3 (2.03s) in window, B3 (2.28s) not yet
+  const a = d.spy.find(s => s.note === 'A3');
+  const bAt1900 = d.spy.filter(s => s.note === 'B3').length;
+  d.set(2600); d.engine._tick(); // B3 now in window
+  const b = d.spy.find(s => s.note === 'B3');
+  return !!a && a.vel === 32 && bAt1900 === 0 && !!b && b.vel === 127;
+});
+
+check('loop clip mirrored from grid keeps per-cell velocity on playback', () => {
+  const d = songFixture(120);
+  const loopClip = d.engine.byId.trk_a.clips.find(c => c.start === 0);
+  d.engine.setClipEvents('trk_a', loopClip.id, [{ note: 'C4', start: 0, dur: 120, velocity: 64 }]);
+  d.play();
+  d.advanceAndTick(100); // step 0 plays at 0.03s, well inside the lookahead
+  const hit = d.spy.find(s => s.note === 'C4');
+  const hist = envHistory(d, 0);
+  return !!hit && hit.vel === 64 && sawRamp(hist, 64 / 127) && sawRamp(hist, 0.7 * (64 / 127));
+});
+
+// ---- piano roll audition (backlog #30) -----------------------------------
+
+check('auditionNote plays through the requested track voice, open note', () => {
+  const d = makeFixture(120);
+  d.engine.auditionNote('trk_a', 'C4', 90);
+  const hit = d.spy.find(s => s.note === 'C4');
+  return !!hit && hit.dur === undefined && hit.vel === 90;
+});
+
+check('auditionNote honors mute/solo and bypasses the monitor flag', () => {
+  const d = makeFixture(120);
+  d.spy.length = 0;
+  d.engine.updateTrack('trk_a', { muted: true });
+  d.engine.auditionNote('trk_a', 'C4');
+  const mutedSilent = !d.spy.some(s => s.note === 'C4');
+  d.spy.length = 0;
+  d.engine.updateTrack('trk_a', { muted: false, monitor: false });
+  d.engine.auditionNote('trk_a', 'C4');
+  const stillSounds = d.spy.some(s => s.note === 'C4');
+  return mutedSilent && stillSounds;
+});
+
+check('auditionNote with a duration self-terminates the note', () => {
+  const d = makeFixture(120);
+  d.engine.auditionNote('trk_a', 'E4', 100, 0.25);
+  const hit = d.spy.find(s => s.note === 'E4');
+  return !!hit && hit.dur === 0.25;
+});
+
+check('auditionNote schedules ahead when a `when` time is given (backlog #40)', () => {
+  const d = makeFixture(120);
+  const at = d.engine.ctx.currentTime + 0.5;
+  d.engine.auditionNote('trk_a', 'G4', 80, 0.2, at);
+  const hit = d.spy.find(s => s.note === 'G4');
+  return !!hit && hit.at === at && hit.dur === 0.2 && hit.vel === 80;
+});
+
+// ---- record mode + record quantization (backlog #41) ----------------------
+check('record defaults to overdub mode with no record quantize', () => {
+  const d = makeFixture(120);
+  return d.engine.recordMode === 'overdub' && d.engine.recordQuantize === null;
+});
+
+check('REPLACE mode clears the loop clip before recording', () => {
+  const d = makeFixture(120);
+  d.engine.toggleGridStep('trk_a', 0, 'C4');
+  d.engine.recordMode = 'replace';
+  d.record();
+  d.advanceAndTick(1000);
+  d.engine.noteOn('E4');
+  d.advanceAndTick(400);
+  d.engine.noteOff('E4');
+  d.engine.stop();
+  return d.track.grid.every(c => c === null)
+    && d.track.rt.length === 1 && d.track.rt[0].note === 'E4';
+});
+
+check('OVERDUB mode keeps existing clip notes while recording new ones', () => {
+  const d = makeFixture(120);
+  d.engine.toggleGridStep('trk_a', 0, 'C4');
+  d.record();
+  d.advanceAndTick(1000);
+  d.engine.noteOn('E4');
+  d.advanceAndTick(400);
+  d.engine.noteOff('E4');
+  d.engine.stop();
+  return d.track.grid[0] && d.track.grid[0].note === 'C4'
+    && d.track.rt.length === 1 && d.track.rt[0].note === 'E4';
+});
+
+check('record quantize snaps captured notes to the grid', () => {
+  const d = makeFixture(120);
+  d.engine.recordQuantize = { grid: 1, strength: 100, swing: 0 };
+  d.record();
+  d.advanceAndTick(1060); // loopPos 1.06s -> off-grid (nearest 16th is 1.0s)
+  d.engine.noteOn('C4');
+  d.advanceAndTick(200);
+  d.engine.noteOff('C4');
+  d.engine.stop();
+  const rt = d.track.rt;
+  return rt.length === 1 && Math.abs(rt[0].start - 1.0) < 0.02;
+});
+
+check('auditionNoteOff releases the auditioned note', () => {
+  const d = makeFixture(120);
+  const offSpy = [];
+  const origOff = d.track.voice.noteOff.bind(d.track.voice);
+  d.track.voice.noteOff = (note, at) => { offSpy.push({ note, at }); origOff(note, at); };
+  d.engine.auditionNote('trk_a', 'C4');
+  d.engine.auditionNoteOff('trk_a', 'C4');
+  return offSpy.some(s => s.note === 'C4');
+});
+
+check('defaultTrackConfig starts with no inserts', () => {
+  const t = defaultTrackConfig({ id: 'trk_i' });
+  return Array.isArray(t.inserts) && t.inserts.length === 0;
+});
+
+check('addInsert appends a descriptor and rebuilds the chain', () => {
+  const d = makeFixture();
+  const ins = d.engine.addInsert('trk_a', 'delay');
+  if (!ins || ins.type !== 'delay' || !ins.id || d.track.inserts.length !== 1) return false;
+  const v = d.track.voice;
+  if (v.inserts.length !== 1) return false;
+  // voice env -> insertIn -> delay.input; delay.output -> trackGain (fader) -> dest
+  const env = v.voices[0].env;
+  const chained = v.inserts[0];
+  return env._connections.has(v.insertIn)
+    && v.insertIn._connections.has(chained.input)
+    && chained.output._connections.has(v.trackGain);
+});
+
+check('addInsert fills default params for the type', () => {
+  const d = makeFixture();
+  const ins = d.engine.addInsert('trk_a', 'delay');
+  if (ins.params.time !== 0.3 || ins.params.feedback !== 0.4 || ins.params.mix !== 0.3) return false;
+  const rv = d.engine.addInsert('trk_a', 'reverb');
+  return rv.params.mix === 0.3 && d.track.inserts.length === 2;
+});
+
+check('addInsert accepts explicit params', () => {
+  const d = makeFixture();
+  const ins = d.engine.addInsert('trk_a', 'delay', { time: 0.6, mix: 0.8 });
+  return ins.params.time === 0.6 && ins.params.feedback === 0.4 && ins.params.mix === 0.8;
+});
+
+check('two inserts chain in order through the fader', () => {
+  const d = makeFixture();
+  d.engine.addInsert('trk_a', 'delay');
+  d.engine.addInsert('trk_a', 'reverb');
+  const v = d.track.voice;
+  if (v.inserts.length !== 2) return false;
+  const [delay, reverb] = v.inserts;
+  return v.insertIn._connections.has(delay.input)
+    && delay.output._connections.has(reverb.input)
+    && reverb.output._connections.has(v.trackGain);
+});
+
+check('unknown insert types are skipped in the chain', () => {
+  const d = makeFixture();
+  d.track.inserts.push({ id: 'ins_x', type: 'bogus', params: {} });
+  d.engine.updateTrack('trk_a', { inserts: d.track.inserts });
+  const v = d.track.voice;
+  return v.inserts.length === 0 && v.insertIn._connections.has(v.trackGain);
+});
+
+check('removeInsert drops the descriptor and rebuilds the chain', () => {
+  const d = makeFixture();
+  d.engine.addInsert('trk_a', 'delay');
+  d.engine.addInsert('trk_a', 'reverb');
+  const ok = d.engine.removeInsert('trk_a', 0);
+  const v = d.track.voice;
+  return ok && d.track.inserts.length === 1 && d.track.inserts[0].type === 'reverb'
+    && v.inserts.length === 1
+    && v.insertIn._connections.has(v.inserts[0].input)
+    && v.inserts[0].output._connections.has(v.trackGain);
+});
+
+check('removeInsert on a missing index is a no-op', () => {
+  const d = makeFixture();
+  d.engine.addInsert('trk_a', 'delay');
+  return d.engine.removeInsert('trk_a', 5) === false && d.track.inserts.length === 1;
+});
+
+check('updateInsert applies params to the live device', () => {
+  const d = makeFixture();
+  const ins = d.engine.addInsert('trk_a', 'delay');
+  const ok = d.engine.updateInsert('trk_a', 0, { time: 0.75, mix: 0.5 });
+  const dev = d.track.voice.inserts[0];
+  return ok && ins.params.time === 0.75 && dev.delay.delayTime.value === 0.75
+    && Math.abs(dev.dry.gain.value - 0.5) < 1e-9;
+});
+
+check('updateInsert leaves id and type immutable', () => {
+  const d = makeFixture();
+  const ins = d.engine.addInsert('trk_a', 'delay');
+  d.engine.updateInsert('trk_a', 0, { id: 'hack', type: 'reverb', mix: 0.2 });
+  return d.track.inserts[0].id === ins.id && d.track.inserts[0].type === 'delay';
+});
+
+check('getTracks includes insert descriptors as plain data', () => {
+  const d = makeFixture();
+  d.engine.addInsert('trk_a', 'delay', { mix: 0.6 });
+  const t = d.engine.getTracks()[0];
+  return Array.isArray(t.inserts) && t.inserts.length === 1
+    && t.inserts[0].type === 'delay' && t.inserts[0].mix === undefined
+    && t.inserts[0].params.mix === 0.6;
+});
+
+check('addTrack restores inserts from a saved track config', () => {
+  const d = makeFixture();
+  d.engine.addInsert('trk_a', 'reverb');
+  const saved = d.engine.getTracks()[0];
+  const t2 = d.engine.addTrack({ id: 'trk_b', name: 'B', inserts: saved.inserts });
+  return t2.inserts.length === 1 && t2.inserts[0].type === 'reverb'
+    && t2.voice.inserts.length === 1
+    && t2.voice.insertIn._connections.has(t2.voice.inserts[0].input);
+});
+
+check('voices route through the insert chain before the fader', () => {
+  const d = makeFixture();
+  d.engine.addInsert('trk_a', 'delay');
+  const v = d.track.voice;
+  // every voice env feeds insertIn, never the fader directly
+  return v.voices.every(vo => vo.env._connections.has(v.insertIn) && !vo.env._connections.has(v.trackGain));
+});
+
+check('audition still schedules when an insert is present', () => {
+  const d = makeFixture(120);
+  d.engine.addInsert('trk_a', 'delay');
+  d.engine.auditionNote('trk_a', 'C4', 100, 0.25);
+  return d.spy.some(s => s.note === 'C4');
+});
+
+// ---- chaseToTick ---------------------------------------------------------
+check('chaseToTick fires noteOn for a sustained loop-clip note', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [
+    { note: 'C4', start: 240, dur: 240, velocity: 100 },
+  ]);
+  d.engine.play(); d.engine.stopTimer();
+  d.set(500); d.engine._tick();
+  d.spy.length = 0;
+  // Chase at tick 360 — inside the note (240..480)
+  d.engine.chaseToTick(360);
+  return d.spy.length === 1 && d.spy[0].note === 'C4' && d.spy[0].dur > 0 && d.spy[0].dur < 0.25;
+});
+check('chaseToTick does not fire notes that ended before seek', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [
+    { note: 'C4', start: 0, dur: 120, velocity: 100 },
+  ]);
+  d.engine.play(); d.engine.stopTimer();
+  d.set(500); d.engine._tick();
+  d.spy.length = 0;
+  d.engine.chaseToTick(240); // past end of note (0..120)
+  return d.spy.length === 0;
+});
+check('chaseToTick does not fire notes that start after seek', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [
+    { note: 'C4', start: 480, dur: 120, velocity: 100 },
+  ]);
+  d.engine.play(); d.engine.stopTimer();
+  d.set(500); d.engine._tick();
+  d.spy.length = 0;
+  d.engine.chaseToTick(240); // before start of note
+  return d.spy.length === 0;
+});
+check('chaseToTick fires noteOn for a sustained arranged-clip note', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 }); // loop mirror
+  d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [
+    { note: 'A3', start: 0, dur: 480, velocity: 100 },
+  ]});
+  d.engine.play(); d.engine.stopTimer();
+  d.set(500); d.engine._tick();
+  d.spy.length = 0;
+  d.engine.chaseToTick(2160); // inside arranged note (1920..2400)
+  return d.spy.length === 1 && d.spy[0].note === 'A3' && d.spy[0].dur > 0;
+});
+check('chaseToTick skips disabled tracks', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [
+    { note: 'C4', start: 240, dur: 240, velocity: 100 },
+  ]);
+  d.engine.updateTrack('trk_a', { enabled: false });
+  d.engine.play(); d.engine.stopTimer();
+  d.set(500); d.engine._tick();
+  d.spy.length = 0;
+  d.engine.chaseToTick(360);
+  return d.spy.length === 0;
+});
+check('chaseToTick is no-op when not playing', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [
+    { note: 'C4', start: 240, dur: 240, velocity: 100 },
+  ]);
+  // Not playing — chase should do nothing
+  d.engine.chaseToTick(360);
+  return d.spy.length === 0;
+});
+
+// --- MIDI channel routing (backlog #173) ---
+check('addTrack includes midiChannel null by default', () => {
+  const d = makeFixture(120);
+  d.engine.addTrack({ id: 'trk_def' });
+  const t = d.engine.byId['trk_def'];
+  return t && t.midiChannel === null;
+});
+check('addTrack preserves midiChannel from config', () => {
+  const d = makeFixture(120);
+  d.engine.addTrack({ id: 'trk_ch1', name: 'Ch1', midiChannel: 5 });
+  const t = d.engine.byId['trk_ch1'];
+  return t && t.midiChannel === 5;
+});
+check('updateTrack sets midiChannel', () => {
+  const d = makeFixture(120);
+  d.engine.updateTrack('trk_a', { midiChannel: 10 });
+  return d.track.midiChannel === 10;
+});
+check('getTracks includes midiChannel', () => {
+  const d = makeFixture(120);
+  d.engine.updateTrack('trk_a', { midiChannel: 3 });
+  const tracks = d.engine.getTracks();
+  const found = tracks.find(t => t.id === 'trk_a');
+  return found && found.midiChannel === 3;
+});
+check('noteOn routes to active track voice when no armed tracks', () => {
+  const d = makeFixture(120);
+  d.spy.length = 0;
+  d.engine.noteOn('C4');
+  return d.spy.length === 1 && d.spy[0].note === 'C4';
+});
+check('noteOff routes to active track voice when no armed tracks', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  d.spy.length = 0;
+  d.engine.noteOff('C4');
+  return d.spy.length === 1 && d.spy[0].note === 'C4';
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;

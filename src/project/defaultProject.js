@@ -50,14 +50,18 @@ export function defaultTrackData(cfg = {}) {
     volume: cfg.volume === undefined ? 0.85 : cfg.volume,
     gridNote: cfg.gridNote || 'C4',
     gridDur: cfg.gridDur || 1,
+    midiChannel: typeof cfg.midiChannel === 'number' ? cfg.midiChannel : null,
     grid: Array.isArray(cfg.grid) ? cfg.grid.slice() : emptyGrid(),
     rt: Array.isArray(cfg.rt) ? cfg.rt.map(n => ({ ...n })) : [],
     clips: Array.isArray(cfg.clips) ? cfg.clips.map(c => ({ ...c })) : [],
+    inserts: Array.isArray(cfg.inserts) ? cfg.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } })) : [],
   };
 }
 
 export function defaultProject(cfg = {}) {
+  const ppq = 480;
   const now = new Date().toISOString();
+  const loopEnd = cfg.loopEndTicks !== undefined ? cfg.loopEndTicks : 4 * ppq;
   return {
     schemaVersion: SCHEMA_VERSION,
     id: cfg.id || createProjectId(),
@@ -65,6 +69,10 @@ export function defaultProject(cfg = {}) {
     createdAt: cfg.createdAt || now,
     modifiedAt: cfg.modifiedAt || now,
     tempo: cfg.tempo === undefined ? 120 : cfg.tempo,
+    loopEnabled: !!cfg.loopEnabled,
+    loopStartTicks: cfg.loopStartTicks !== undefined ? cfg.loopStartTicks : 0,
+    loopEndTicks: loopEnd,
+    projectEndTicks: cfg.projectEndTicks !== undefined ? cfg.projectEndTicks : null,
     rack: {
       components: Array.isArray(cfg.rackComponents) ? cfg.rackComponents : [],
       connections: Array.isArray(cfg.rackConnections) ? cfg.rackConnections : [],

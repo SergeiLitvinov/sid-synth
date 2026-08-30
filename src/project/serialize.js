@@ -38,7 +38,7 @@ export function validateTrack(t) {
 // Build a versioned project document from live app state. `components` is a map
 // id -> {type, element, ...params} and captureParams(comp) extracts params.
 // `tracks` is the plain-data array from trackEngine.getTracks().
-export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers }) {
+export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks }) {
   const rackComponents = Object.keys(components || {}).map(cid => {
     const comp = components[cid];
     return {
@@ -62,6 +62,10 @@ export function serializeProject({ components, connections, captureParams, track
     rackConnections,
     tracks: (tracks || []).map(normalizeTrackData),
     markers: (markers || []).map(normalizeMarker),
+    loopEnabled,
+    loopStartTicks,
+    loopEndTicks,
+    projectEndTicks,
   });
   validateProject(project);
   (project.rack.components || []).forEach(validateComponent);
@@ -90,6 +94,10 @@ export function parseProject(data) {
   project.name = typeof project.name === 'string' ? project.name : 'Untitled';
   project.id = typeof project.id === 'string' && project.id ? project.id : defaultProject().id;
   project.tempo = typeof project.tempo === 'number' && project.tempo > 0 ? project.tempo : 120;
+  project.loopEnabled = !!project.loopEnabled;
+  project.loopStartTicks = typeof project.loopStartTicks === 'number' && project.loopStartTicks >= 0 ? project.loopStartTicks : 0;
+  project.loopEndTicks = typeof project.loopEndTicks === 'number' && project.loopEndTicks > 0 ? project.loopEndTicks : 4 * 480;
+  project.projectEndTicks = typeof project.projectEndTicks === 'number' && project.projectEndTicks > 0 ? project.projectEndTicks : null;
   project.rack = project.rack && typeof project.rack === 'object' ? {
     components: Array.isArray(project.rack.components) ? project.rack.components.map(normalizeComponent) : [],
     connections: Array.isArray(project.rack.connections) ? project.rack.connections : [],
@@ -121,6 +129,11 @@ export function normalizeTrackData(t) {
   const grid = Array.isArray(src.grid) ? src.grid.map(normalizeCell) : base.grid;
   const rt = Array.isArray(src.rt) ? src.rt.map(n => ({ note: n.note, start: n.start, dur: n.dur })) : [];
   const clips = Array.isArray(src.clips) ? src.clips.map(normalizeClip) : [];
+  const inserts = Array.isArray(src.inserts)
+    ? src.inserts
+      .filter(i => i && typeof i === 'object' && typeof i.type === 'string')
+      .map(i => ({ id: typeof i.id === 'string' && i.id ? i.id : 'ins_' + Math.random().toString(36).slice(2, 8), type: i.type, params: i.params && typeof i.params === 'object' ? { ...i.params } : {} }))
+    : [];
   return {
     id: typeof src.id === 'string' && src.id ? src.id : base.id,
     name: typeof src.name === 'string' ? src.name : base.name,
@@ -140,9 +153,11 @@ export function normalizeTrackData(t) {
     volume: typeof src.volume === 'number' ? src.volume : base.volume,
     gridNote: typeof src.gridNote === 'string' ? src.gridNote : base.gridNote,
     gridDur: typeof src.gridDur === 'number' && src.gridDur > 0 ? src.gridDur : base.gridDur,
+    midiChannel: typeof src.midiChannel === 'number' ? src.midiChannel : null,
     grid,
     rt,
     clips,
+    inserts,
   };
 }
 

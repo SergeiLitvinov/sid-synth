@@ -16,13 +16,19 @@ function copyClips(clips) {
   return (clips || []).map(c => ({ ...c, events: (c.events || []).slice() }));
 }
 
+function copyInserts(inserts) {
+  return (inserts || []).map(i => ({ ...i, params: { ...(i.params || {}) } }));
+}
+
 function trackSnapshot(t) {
   return {
     id: t.id, name: t.name, color: t.color, enabled: t.enabled, monitor: t.monitor, height: t.height || null,
     muted: t.muted, solo: t.solo, folder: t.folder || null, collapsed: !!t.collapsed,
     wave: t.wave, filterType: t.filterType, filterFreq: t.filterFreq, filterQ: t.filterQ,
     adsr: { ...t.adsr }, volume: t.volume, gridNote: t.gridNote, gridDur: t.gridDur,
+    midiChannel: typeof t.midiChannel === 'number' ? t.midiChannel : null,
     grid: copyGrid(t.grid), rt: copyRt(t.rt), clips: copyClips(t.clips),
+    inserts: copyInserts(t.inserts),
   };
 }
 
@@ -90,7 +96,7 @@ export function updateTrackCommand(engine, id, patch) {
       before = {};
       Object.keys(patch).forEach(k => {
         const v = t[k];
-        if (Array.isArray(v)) before[k] = k === 'grid' ? copyGrid(v) : copyRt(v);
+        if (Array.isArray(v)) before[k] = k === 'grid' ? copyGrid(v) : k === 'inserts' ? copyInserts(v) : copyRt(v);
         else if (v && typeof v === 'object') before[k] = { ...v };
         else before[k] = v;
       });
@@ -361,6 +367,82 @@ export function removeClipsCommand(engine, items) {
     },
     undo() {
       snapshots.forEach(s => engine.addClip(s.trackId, s.clip));
+    },
+  };
+}
+
+// Replace a clip's note events (backlog #25, piano roll). Captures the previous
+// events on first apply so undo restores them; redo re-applies the new set.
+export function editClipEventsCommand(engine, id, clipId, events) {
+  let before = null;
+  return {
+    label: 'Edit clip notes',
+    apply() {
+      const t = engine.byId[id];
+      const clip = t && t.clips.find(c => c.id === clipId);
+      if (!clip) return;
+      before = (clip.events || []).map(ev => ({ ...ev }));
+      engine.setClipEvents(id, clipId, events);
+    },
+    undo() {
+      if (before !== null) engine.setClipEvents(id, clipId, before);
+    },
+  };
+}
+
+// Insert devices (backlog #32). Commands mutate the descriptor list through the
+// engine; TrackVoices rebuilds the audio chain from the list on each apply.
+export function addInsertCommand(engine, id, type, params) {
+  let createdId = null;
+  return {
+    label: 'Add ' + type + ' insert',
+    apply() {
+      const ins = engine.addInsert(id, type, params);
+      createdId = ins ? ins.id : null;
+    },
+    undo() {
+      if (!createdId) return;
+      const t = engine.byId[id];
+      const idx = t && t.inserts.findIndex(i => i.id === createdId);
+      if (idx >= 0) engine.removeInsert(id, idx);
+    },
+  };
+}
+
+export function removeInsertCommand(engine, id, index) {
+  let snap = null;
+  return {
+    label: 'Remove insert',
+    apply() {
+      const t = engine.byId[id];
+      const ins = t && t.inserts[index];
+      if (!ins) return;
+      snap = { index, insert: copyInserts([ins])[0] };
+      engine.removeInsert(id, index);
+    },
+    undo() {
+      if (!snap) return;
+      const t = engine.byId[id];
+      if (!t) return;
+      t.inserts.splice(Math.min(snap.index, t.inserts.length), 0, snap.insert);
+      if (t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
+    },
+  };
+}
+
+export function updateInsertCommand(engine, id, index, patch) {
+  let before = null;
+  return {
+    label: 'Update insert',
+    apply() {
+      const t = engine.byId[id];
+      const ins = t && t.inserts[index];
+      if (!ins) return;
+      before = { ...ins.params };
+      engine.updateInsert(id, index, patch);
+    },
+    undo() {
+      if (before !== null) engine.updateInsert(id, index, before);
     },
   };
 }

@@ -15,10 +15,12 @@ import { initMidi } from './services/midi.js';
 import { createRouter } from './services/router.js';
 import { createPatchStore } from './services/patchStore.js';
 import { createPatchFile } from './services/patchFile.js';
+import { renderWav } from './services/wavExport.js';
 import { createTrackEngine } from './tracks/trackEngine.js';
 import { createStepEngineAdapter } from './tracks/stepEngineAdapter.js';
 import { createRecorderUI } from './tracks/recorderUI.js';
 import { createArranger } from './arranger/arranger.js';
+import { createPianoRoll } from './arranger/pianoRoll.js';
 import { createHistory } from './project/history.js';
 import { createTransport } from './project/transport.js';
 import { createProjectStore } from './project/projectStore.js';
@@ -358,13 +360,52 @@ console.log('SID Synth Modular loaded');
   patchStore.refreshPresetList();
 
   // MIDI
-  initMidi({
+  const midiApi = initMidi({
     button: document.getElementById('midiConnect'),
     statusEl: document.getElementById('midiStatus'),
     ctx,
-    playNote,
-    stopAll,
+    onNoteOn: (note, channel) => {
+      // Route to track engine with channel filtering
+      if (trackEngine) _routeMidiNote(note, channel, true);
+      // Also route to rack for live preview
+      if (trackEngine && !trackEngine._armed.size) playNote(note);
+    },
+    onNoteOff: (note, channel) => {
+      if (trackEngine) _routeMidiNote(note, channel, false);
+    },
   });
+
+  function _routeMidiNote(note, channel, isOn) {
+    if (!trackEngine) return;
+    const tracks = trackEngine.getTracks();
+    // Find tracks that accept this channel (midiChannel === null = omni)
+    const targets = tracks.filter(t => t.midiChannel === null || t.midiChannel === channel);
+    if (!targets.length) {
+      // Fallback: route to active track like keyboard does
+      const id = trackEngine.activeTrackId || (tracks[0] && tracks[0].id);
+      if (id && trackEngine.byId[id]) {
+        if (isOn) trackEngine.noteOn(note);
+        else trackEngine.noteOff(note);
+      }
+      return;
+    }
+    // Route to matching tracks directly (bypass armed-track gate)
+    const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
+    const noteName = resolve(note);
+    const now = trackEngine.ctx.currentTime;
+    targets.forEach(t => {
+      if (isOn) {
+        t.voice.noteOn(noteName, now);
+        if (trackEngine._recording && trackEngine._armed.has(t.id)) {
+          // Stamp into armed+matching tracks' realtime buffer
+          trackEngine.noteOn(note);
+        }
+      } else {
+        t.voice.noteOff(noteName, now);
+      }
+    });
+    if (isOn) trackEngine._lastNote = noteName;
+  }
 
   // Recorder: multi-track loop sequencer + realtime recording.
   // Keyboard presses feed recorder noteOn/noteOff while armed tracks capture them.
@@ -376,17 +417,34 @@ console.log('SID Synth Modular loaded');
   const trackEngine = createTrackEngine(recorderCtx, recorderDest);
   const recorderEl = document.getElementById('recorder');
   const history = createHistory();
+
+  // WAV export (backlog #38): bounce the live mix through the master bus.
+  const exportWav = (opts = {}) => renderWav({
+    ctx,
+    masterGain,
+    play: () => trackEngine.play(),
+    stop: () => trackEngine.stop(),
+    bars: opts.bars || 4,
+    bpm: trackEngine.bpm,
+  });
   const transport = createTransport({ ctx: recorderCtx, bpm: trackEngine.bpm });
   createStepEngineAdapter(trackEngine, transport);
   const recorderUI = recorderEl
-    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history })
+    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history, exportWav, midiApi })
     : null;
 
   // Linear arranger: ruler + track lanes + playhead on the unified transport.
   const arrangerEl = document.getElementById('arranger');
   const markers = createMarkerStore();
+  const pianoRollEl = document.getElementById('pianoRoll');
+  const pianoRoll = pianoRollEl
+    ? createPianoRoll({ container: pianoRollEl, engine: trackEngine, transport, history })
+    : null;
   const arranger = arrangerEl
-    ? createArranger({ container: arrangerEl, engine: trackEngine, transport, history, markers })
+    ? createArranger({
+        container: arrangerEl, engine: trackEngine, transport, history, markers,
+        cfg: { onSelectionChange: (s) => { if (pianoRoll) pianoRoll.setSelection(s); } },
+      })
     : null;
 
   // Start with one default track so the panel is usable immediately.
@@ -424,6 +482,10 @@ console.log('SID Synth Modular loaded');
       markers: markers.getMarkers(),
       id: projectId,
       name: projectName,
+      loopEnabled: transport.loopEnabled,
+      loopStartTicks: transport.loopStartTicks,
+      loopEndTicks: transport.loopEndTicks,
+      projectEndTicks: transport.projectEndTicks,
     });
   }
 
@@ -464,6 +526,13 @@ console.log('SID Synth Modular loaded');
     }
     if (recorderUI) recorderUI.renderAll();
     markers.set(Array.isArray(project.markers) ? project.markers : []);
+
+    // Restore loop locators + project end.
+    transport.loopEnabled = !!project.loopEnabled;
+    transport.loopStartTicks = typeof project.loopStartTicks === 'number' ? project.loopStartTicks : 0;
+    transport.loopEndTicks = typeof project.loopEndTicks === 'number' ? project.loopEndTicks : 4 * transport.ppq;
+    transport.projectEndTicks = typeof project.projectEndTicks === 'number' ? project.projectEndTicks : null;
+
     if (arranger) arranger.render();
   }
 
@@ -481,6 +550,7 @@ console.log('SID Synth Modular loaded');
   });
   rack.addEventListener('change', () => projectStore.markDirty());
   history.subscribe(() => projectStore.markDirty());
+  transport.onStateChange(() => projectStore.markDirty());
 
   projectStore.restore();
   if (recorderUI) recorderUI.renderAll();
