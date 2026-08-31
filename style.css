@@ -1063,6 +1063,29 @@ button.btn-red:hover { background: #aa4444; color: #000; }
 }
 .pr-cell.black { background: #05080a; }
 .pr-cell:hover { background: #0c1f0c; }
+
+/* Drum / step editor mode (backlog #175) */
+.pr-cell.drum-cell {
+  width: 18px;
+  height: 12px;
+  cursor: pointer;
+  background: #0a0f0a;
+  border: 1px solid #111;
+}
+.pr-cell.drum-cell:hover { background: #0f2a0f; }
+.pr-cell.drum-cell.active {
+  background: #2a7a2a;
+  box-shadow: 0 0 4px #4af74a;
+}
+.pr-pitch.drum-pad {
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+  user-select: none;
+}
+
 .pr-note {
   position: absolute;
   background: #4af74a;

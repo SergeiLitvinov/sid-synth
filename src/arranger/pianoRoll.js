@@ -88,6 +88,17 @@ export function createPianoRoll({ container, engine, transport, history }) {
   stepBtn.addEventListener('click', () => setStepMode(!stepMode));
   controls.append(stepBtn);
 
+  // Drum/step editor mode (backlog #175): toggles between piano roll and
+  // drum-grid view. The drum grid shows a 16-step × 12-pitch matrix where
+  // each cell is a toggleable note — backed by the same clip events model.
+  let drumMode = false;
+  const drumBtn = document.createElement('button');
+  drumBtn.className = 'pr-step-btn';
+  drumBtn.textContent = 'DRUM';
+  drumBtn.title = 'Toggle drum/step editor mode: 16-step grid with drum pads (C3–B3)';
+  drumBtn.addEventListener('click', () => { drumMode = !drumMode; drumBtn.classList.toggle('on', drumMode); render(); });
+  controls.append(drumBtn);
+
   const hint = document.createElement('div');
   hint.className = 'pr-hint';
   hint.textContent = 'select a clip in the arranger — click an empty cell to add a note (auditioned), drag on the grid to box-select notes, drag a note (or a selection) to move it (its pitch auditions while you drag), drag its edges to resize, click a note to remove it, Delete removes the selection, Ctrl+D duplicates it; drag a velocity bar to set the note velocity; zoom with the −/+ buttons or Ctrl+wheel; quantize note starts with Q (strength/swing, snaps to the active grid); transpose note pitches with T (semitones, clamped to the visible range); extend each note to the next one with L (legato); set each note length to the snap grid step with F (fixed length); nudge note starts and velocities with H (humanize, random offsets); arm STEP to type notes from the keyboard at the cursor (arrows move it, Backspace steps back, Esc exits)';
@@ -613,9 +624,103 @@ export function createPianoRoll({ container, engine, transport, history }) {
       empty.className = 'pr-empty';
       empty.textContent = 'No clip selected — click a clip in the arranger, then draw notes here.';
       gridWrap.appendChild(empty);
-      title.textContent = 'PIANO ROLL';
+      title.textContent = drumMode ? 'DRUM GRID' : 'PIANO ROLL';
       return;
     }
+
+    // --- DRUM / STEP EDITOR MODE (backlog #175) ---
+    if (drumMode) {
+      title.textContent = 'DRUM GRID · ' + (clip.name || clip.id);
+      const ppq = transport.ppq || 480;
+      const drumPitches = ['C3','C#3','D3','D#3','E3','F3','F#3','G3','G#3','A3','A#3','B3'];
+      const drumNotes = ['Kick','Snare','HiHat','HiHat Open','Clap','Tom Hi','Tom Mid','Tom Low','Rim','Cowbell','Perc Hi','Perc Low'];
+      const { stepTicks, steps } = pianoSteps(clip, ppq);
+      const cw = cellW;
+      const ch = cellH;
+      const pitchW = PITCH_W + 20;
+      const gridW = steps * cw;
+      const gridH = drumPitches.length * ch;
+
+      // Step numbers
+      const stepHead = document.createElement('div');
+      stepHead.className = 'pr-steps';
+      stepHead.style.width = (pitchW + gridW) + 'px';
+      for (let ci = 0; ci < steps; ci++) {
+        const s = document.createElement('span');
+        s.className = 'pr-step';
+        s.textContent = ci + 1;
+        s.style.left = (pitchW + ci * cw) + 'px';
+        stepHead.appendChild(s);
+      }
+
+      const body = document.createElement('div');
+      body.className = 'pr-body';
+      body.style.width = (pitchW + gridW) + 'px';
+      body.style.height = gridH + 'px';
+
+      // Build event lookup: stepIndex -> Set of pitch indices
+      const events = clip.events || [];
+      const stepSet = new Map(); // stepIdx -> Set of pitchIdx
+      drumPitches.forEach((_, pi) => {
+        for (let si = 0; si < steps; si++) stepSet.set(si + '_' + pi, false);
+      });
+      events.forEach(ev => {
+        const si = Math.round((ev.start || 0) / stepTicks);
+        const pi = drumPitches.indexOf(ev.note);
+        if (si >= 0 && si < steps && pi >= 0) stepSet.set(si + '_' + pi, true);
+      });
+
+      // Commit function for drum cell toggles (must be defined before cells)
+      function drumCommitEvents(mutate) {
+        const evts = (clip.events || []).slice();
+        mutate(evts);
+        if (history && history.execute) {
+          history.execute(editClipEventsCommand(engine, sel.trackId, clip.id, evts));
+        } else {
+          engine.setClipEvents(sel.trackId, clip.id, evts);
+          render();
+        }
+      }
+
+      // Render pitch labels + drum pad cells
+      drumPitches.forEach((note, ri) => {
+        const lab = document.createElement('div');
+        lab.className = 'pr-pitch drum-pad';
+        lab.textContent = drumNotes[ri] || note;
+        lab.title = note;
+        lab.style.top = (ri * ch) + 'px';
+        body.appendChild(lab);
+
+        for (let ci = 0; ci < steps; ci++) {
+          const cell = document.createElement('div');
+          cell.className = 'pr-cell drum-cell';
+          const has = stepSet.get(ci + '_' + ri);
+          if (has) cell.classList.add('active');
+          cell.style.left = (pitchW + ci * cw) + 'px';
+          cell.style.top = (ri * ch) + 'px';
+          cell.title = note + ' step ' + (ci + 1);
+          cell.addEventListener('pointerdown', () => {
+            const noteName = drumPitches[ri];
+            const start = ci * stepTicks;
+            drumCommitEvents(evts => {
+              const existing = evts.findIndex(e => e.note === noteName && Math.abs((e.start || 0) - start) < 1);
+              if (existing >= 0) evts.splice(existing, 1);
+              else {
+                evts.push({ note: noteName, start, dur: stepTicks, velocity: 100 });
+                evts.sort((a, b) => (a.start || 0) - (b.start || 0));
+              }
+            });
+          });
+          body.appendChild(cell);
+        }
+      });
+
+      commitCtx = { commitEvents: drumCommitEvents, events: clip.events || [] };
+
+      gridWrap.append(stepHead, body);
+      return;
+    }
+    // --- END DRUM MODE ---
 
     const ppq = transport.ppq || 480;
     const rows = pianoRows(DEFAULT_LOW_MIDI, DEFAULT_HIGH_MIDI);

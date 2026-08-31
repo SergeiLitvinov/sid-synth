@@ -9,3 +9,9 @@ __pycache__/
 
 # Playwright MCP artifacts
 .playwright-mcp/
+
+# Server logs
+*.log
+*.log.err
+server.log
+server_stderr.txt

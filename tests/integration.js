@@ -45,7 +45,9 @@
 // edit params, undo/redo, persistence across reload).
 // backlog #155: loop locators + project end marker.
 // backlog #173: MIDI input routing.
-// 219 steps total.
+// backlog #174: pitch bend / modulation / sustain / CC.
+// backlog #175: drum/step editor mode.
+// 225 steps total.
 async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -1975,6 +1977,68 @@ async (page) => {
   });
   r.steps = r.steps.concat(r29Persist.steps);
   r.steps.push({ name: 'r29: MIDI routing section ran', ok: true });
+
+  // 30. Drum/step editor mode (backlog #175): DRUM button toggles drum grid,
+  // drum cells render, clicking a cell toggles a note in the clip events.
+  const r30 = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+
+    // First, select a clip in the arranger so piano roll has a target
+    // (must use pointerdown/pointerup with coordinates, like the piano roll tests)
+    const clip = document.querySelector('.arranger-clip');
+    const arr = document.getElementById('arranger');
+    if (clip && arr) {
+      const contentRect = arr.querySelector('.arranger-content').getBoundingClientRect();
+      clip.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 8, pointerType: 'mouse', clientX: contentRect.left + 5 }));
+      clip.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8, pointerType: 'mouse', clientX: contentRect.left + 5 }));
+    }
+
+    // Find DRUM button in piano roll
+    const allBtns = document.querySelectorAll('#pianoRoll button');
+    const drumBtn = [...allBtns].find(b => b.textContent.trim() === 'DRUM');
+    step('DRUM button exists', !!drumBtn);
+
+    if (drumBtn) {
+      // Click DRUM to enter drum mode
+      drumBtn.click();
+      const title = document.querySelector('#pianoRoll .pr-title');
+      step('DRUM mode title shows DRUM GRID', !!title && title.textContent.includes('DRUM GRID'));
+
+      // Drum cells should be rendered
+      const drumCells = document.querySelectorAll('#pianoRoll .drum-cell');
+      step('drum cells rendered', drumCells.length > 0, drumCells.length);
+
+      // Click a drum cell (C3, step 1) to toggle a note
+      if (drumCells.length) {
+        const before = drumCells[0].classList.contains('active');
+        drumCells[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        // Re-query after render replaces DOM elements
+        const freshCells = document.querySelectorAll('#pianoRoll .drum-cell');
+        const after = freshCells.length > 0 && freshCells[0].classList.contains('active');
+        step('drum cell toggles on click', before !== after, { before, after });
+
+        // Click again to toggle off
+        if (freshCells.length) {
+          freshCells[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          const freshCells2 = document.querySelectorAll('#pianoRoll .drum-cell');
+          const back = freshCells2.length > 0 && freshCells2[0].classList.contains('active');
+          step('drum cell toggles back', back === before);
+        }
+      }
+
+      // Switch back to piano roll
+      drumBtn.click();
+      const titleBack = document.querySelector('#pianoRoll .pr-title');
+      step('PIANO ROLL mode restored', !!titleBack && !titleBack.textContent.includes('DRUM'));
+    }
+
+    return results;
+  });
+  r.steps = r.steps.concat(r30.steps);
+  r.steps.push({ name: 'r30: drum editor section ran', ok: true });
 
   return r;
 }
