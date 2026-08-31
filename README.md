@@ -170,7 +170,7 @@ sid-synth/
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)
-│   └── integration.js      #   E2E против живого приложения (219 шагов, Playwright)
+│   └── integration.js      #   E2E против живого приложения (225 шагов, Playwright)
 ├── src/
 │   ├── main.js             # Core logic, drag-drop, visualization
 │   ├── services/            # Services (router, presets, keyboard, MIDI, etc.)

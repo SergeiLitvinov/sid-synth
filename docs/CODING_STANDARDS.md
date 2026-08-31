@@ -69,7 +69,7 @@
   `http://localhost:3000/tests/clipEvents-test.html` (21/21),
   `http://localhost:3000/tests/wavExport-test.html` (8/8) и
   `http://localhost:3000/tests/arranger-test.html` (207/207) — без FAIL (итого 509/509).
-- E2E: `tests/integration.js` (219 шагов) гоняется браузерным харнессом (Playwright MCP)
+- E2E: `tests/integration.js` (225 шагов, 7 новых в r30 — drum editor; проверка в браузере потребуется при восстановлении Playwright MCP) гоняется браузерным харнессом (Playwright MCP)
   против живого приложения (порт 3000 или 3100) — без FAIL.
 - Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу
   (общий профиль даёт ложные фейлы — известный флак); ожидание `SUMMARY:` в DOM.
