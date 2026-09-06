@@ -4,7 +4,7 @@
 // reads tracks from the engine and musical time from the transport's tempo map.
 
 import { computeRuler, contentWidthTicks, layoutTrackBlocks, layoutClips, layoutClipNotes, ticksToX, xToTicks, snapTicks } from './arrangerLayout.js';
-import { addClipCommand, moveClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, setTrackFlagCommand, renameTrackCommand, reorderTrackCommand, updateTrackCommand, resizeTrackCommand } from '../project/trackCommands.js';
+import { addClipCommand, moveClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, setTrackFlagCommand, renameTrackCommand, reorderTrackCommand, updateTrackCommand, resizeTrackCommand, crossfadeClipsCommand } from '../project/trackCommands.js';
 import { drawWaveform } from '../audio/waveform.js';
 import { addMarkerCommand, removeMarkerCommand } from '../project/markerCommands.js';
 
@@ -111,6 +111,12 @@ export function createArranger({ container, engine, transport, history, markers,
   loopBtn.title = 'Loop the selected clip 3x (L)';
   loopBtn.addEventListener('click', () => loopSelectedClip());
 
+  const xfadeBtn = document.createElement('button');
+  xfadeBtn.className = 'arranger-btn';
+  xfadeBtn.textContent = 'x-fade';
+  xfadeBtn.title = 'Crossfade two selected overlapping audio clips on one track';
+  xfadeBtn.addEventListener('click', () => crossfadeSelectedClips());
+
   const markerBtn = document.createElement('button');
   markerBtn.className = 'arranger-btn';
   markerBtn.textContent = '+ mrk';
@@ -135,7 +141,7 @@ export function createArranger({ container, engine, transport, history, markers,
     render();
   });
 
-  toolbar.append(title, zoomOut, zoomLabel, zoomIn, addClip, splitBtn, dupBtn, loopBtn, markerBtn, loopToggle, endMarkerBtn);
+  toolbar.append(title, zoomOut, zoomLabel, zoomIn, addClip, splitBtn, dupBtn, loopBtn, xfadeBtn, markerBtn, loopToggle, endMarkerBtn);
 
   // ---- scroll viewport + content -------------------------------------
   const scroll = document.createElement('div');
@@ -222,6 +228,25 @@ export function createArranger({ container, engine, transport, history, markers,
     } else {
       engine.duplicateClip(trackId, clipId);
       render();
+    }
+  }
+
+  // Crossfade two selected overlapping audio clips on one track (M4): the
+  // earlier clip fades out across the overlap while the later fades in.
+  // Silent no-op unless the selection holds exactly such a pair.
+  function crossfadeSelectedClips() {
+    if (!selection || selection.length !== 2) return;
+    const [s1, s2] = selection;
+    if (!s1 || !s2 || s1.trackId !== s2.trackId) return;
+    const tracks = (engine.getTracks && engine.getTracks()) || [];
+    const t = tracks.find(x => x.id === s1.trackId);
+    const a = t && (t.clips || []).find(c => c.id === s1.clipId);
+    const b = t && (t.clips || []).find(c => c.id === s2.clipId);
+    if (!a || !b || !a.audio || !b.audio) return;
+    const overlap = Math.min(a.start + a.length, b.start + b.length) - Math.max(a.start, b.start);
+    if (!(overlap > 0)) return;
+    if (history && history.execute) {
+      history.execute(crossfadeClipsCommand(engine, s1.trackId, s1.clipId, s2.clipId));
     }
   }
 

@@ -1,4 +1,5 @@
 import { defaultTrackData } from './defaultProject.js';
+import { ticksPerSecond } from './clipEvents.js';
 
 // Command factories for recorder track operations. Each returns a command
 // `{ label, apply, undo }` suitable for createHistory. Commands mutate the
@@ -410,6 +411,55 @@ export function setClipAudioCommand(engine, id, clipId, audio) {
     undo() {
       if (!applied) return;
       engine.setClipAudio(id, clipId, before);
+    },
+  };
+}
+
+// Crossfade two overlapping audio clips on one track (M4): the earlier
+// clip gets fadeOut and the later clip fadeIn over their overlap region
+// (seconds), so the scheduler blends the boundary instead of layering two
+// full voices. Captures both previous references on first apply; redo
+// re-applies the same fades even if the clips moved since. No-op unless
+// both clips exist, carry audio, and actually overlap.
+export function crossfadeClipsCommand(engine, trackId, clipIdA, clipIdB) {
+  let before = null;
+  let computed = null;
+  let applied = false;
+  function resolve() {
+    const t = engine.byId[trackId];
+    const a = t && t.clips.find(c => c.id === clipIdA);
+    const b = t && t.clips.find(c => c.id === clipIdB);
+    if (!a || !b || !a.audio || !b.audio) return null;
+    const first = a.start <= b.start ? a : b;
+    const second = first === a ? b : a;
+    const overlapTicks = Math.min(first.start + first.length, second.start + second.length)
+      - Math.max(first.start, second.start);
+    if (!(overlapTicks > 0)) return null;
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    return { first, second, durSec: overlapTicks / tps };
+  }
+  return {
+    label: 'Crossfade clips',
+    apply() {
+      const r = resolve();
+      if (!r) return;
+      if (!applied) {
+        before = [
+          { id: r.first.id, audio: r.first.audio ? { ...r.first.audio } : null },
+          { id: r.second.id, audio: r.second.audio ? { ...r.second.audio } : null },
+        ];
+        computed = { firstId: r.first.id, secondId: r.second.id, durSec: r.durSec };
+        applied = true;
+      }
+      const first = engine.byId[trackId].clips.find(c => c.id === computed.firstId);
+      const second = engine.byId[trackId].clips.find(c => c.id === computed.secondId);
+      if (!first || !second) return;
+      engine.setClipAudio(trackId, first.id, { ...(first.audio || {}), fadeOut: computed.durSec });
+      engine.setClipAudio(trackId, second.id, { ...(second.audio || {}), fadeIn: computed.durSec });
+    },
+    undo() {
+      if (!applied || !before) return;
+      before.forEach(s => engine.setClipAudio(trackId, s.id, s.audio));
     },
   };
 }

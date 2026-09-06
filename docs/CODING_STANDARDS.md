@@ -60,7 +60,7 @@
 - Сервер: `.\serve.ps1` (порт 3000, через `serve.py`) или `pwsh -File tests/serve-ps.ps1` (порт 3100, только PS7) — оба без кэша.
 - Браузерные тесты: `.\serve.ps1` → `http://localhost:3000/tests/smoke.html` (10/10),
   `http://localhost:3000/tests/mock-test.html` (11/11),
-  `http://localhost:3000/tests/track-test.html` (121/121),  `http://localhost:3000/tests/project-test.html` (43/43),
+  `http://localhost:3000/tests/track-test.html` (125/125),  `http://localhost:3000/tests/project-test.html` (43/43),
   `http://localhost:3000/tests/history-test.html` (28/28),
   `http://localhost:3000/tests/recorderUI-test.html` (27/27),
   `http://localhost:3000/tests/musicalTime-test.html` (26/26),
@@ -72,7 +72,7 @@
   `http://localhost:3000/tests/resample-test.html` (9/9),
   `http://localhost:3000/tests/audioEngine-test.html` (11/11),
   `http://localhost:3000/tests/wavExport-test.html` (8/8) и
-  `http://localhost:3000/tests/arranger-test.html` (215/215) — без FAIL (итого 643/643).
+  `http://localhost:3000/tests/arranger-test.html` (217/217) — без FAIL (итого 649/649).
 - E2E: `tests/integration.js` (239 шагов: r30 — drum editor, r31 — media pool DOM, r32 — audio clip UI; полный прогон требует Node/MCP-браузер, ключевые flow r32 проверены headless через Python Playwright) гоняется браузерным харнессом (Playwright MCP)
   против живого приложения (порт 3000 или 3100) — без FAIL.
 - Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу

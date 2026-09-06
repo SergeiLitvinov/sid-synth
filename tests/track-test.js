@@ -4,7 +4,7 @@ import {
   defaultTrackConfig,
   STEPS_PER_LOOP,
 } from '../src/tracks/trackEngine.js';
-import { setClipAudioCommand } from '../src/project/trackCommands.js';
+import { setClipAudioCommand, crossfadeClipsCommand } from '../src/project/trackCommands.js';
 
 const results = document.getElementById('results');
 const summary = document.getElementById('summary');
@@ -1278,6 +1278,62 @@ check('setClipAudioCommand applies and undoes', () => {
   if (d.engine.byId.trk_a.clips.find(c => c.id === clip.id).audio.hash !== 'hx') return false;
   cmd.undo();
   return d.engine.byId.trk_a.clips.find(c => c.id === clip.id).audio === null;
+});
+check('crossfadeClipsCommand sets complementary fades over the overlap', () => {
+  const d = makeFixture(120);
+  const a = d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const b = d.engine.addClip('trk_a', { start: 960, length: 1920 });
+  d.engine.setClipAudio('trk_a', a.id, { hash: 'h1' });
+  d.engine.setClipAudio('trk_a', b.id, { hash: 'h2' });
+  const cmd = crossfadeClipsCommand(d.engine, 'trk_a', a.id, b.id);
+  cmd.apply();
+  const ra = d.engine.byId.trk_a.clips.find(c => c.id === a.id).audio;
+  const rb = d.engine.byId.trk_a.clips.find(c => c.id === b.id).audio;
+  return ra.fadeOut === 1 && rb.fadeIn === 1 && ra.hash === 'h1' && rb.hash === 'h2';
+});
+check('crossfadeClipsCommand undo restores previous fades', () => {
+  const d = makeFixture(120);
+  const a = d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const b = d.engine.addClip('trk_a', { start: 960, length: 1920 });
+  d.engine.setClipAudio('trk_a', a.id, { hash: 'h1', fadeOut: 0.2 });
+  d.engine.setClipAudio('trk_a', b.id, { hash: 'h2', fadeIn: 0.3 });
+  const cmd = crossfadeClipsCommand(d.engine, 'trk_a', a.id, b.id);
+  cmd.apply();
+  cmd.undo();
+  const ra = d.engine.byId.trk_a.clips.find(c => c.id === a.id).audio;
+  const rb = d.engine.byId.trk_a.clips.find(c => c.id === b.id).audio;
+  return ra.fadeOut === 0.2 && rb.fadeIn === 0.3;
+});
+check('crossfadeClipsCommand is order-independent and re-applies on redo', () => {
+  const d = makeFixture(120);
+  const a = d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const b = d.engine.addClip('trk_a', { start: 960, length: 1920 });
+  d.engine.setClipAudio('trk_a', a.id, { hash: 'h1' });
+  d.engine.setClipAudio('trk_a', b.id, { hash: 'h2' });
+  const cmd = crossfadeClipsCommand(d.engine, 'trk_a', b.id, a.id);
+  cmd.apply();
+  const ra = d.engine.byId.trk_a.clips.find(c => c.id === a.id).audio;
+  const rb = d.engine.byId.trk_a.clips.find(c => c.id === b.id).audio;
+  if (!(ra.fadeOut === 1 && rb.fadeIn === 1)) return false;
+  cmd.undo();
+  cmd.apply();
+  const ra2 = d.engine.byId.trk_a.clips.find(c => c.id === a.id).audio;
+  return ra2.fadeOut === 1;
+});
+check('crossfadeClipsCommand no-ops without overlap or audio', () => {
+  const d = makeFixture(120);
+  const a = d.engine.addClip('trk_a', { start: 0, length: 960 });
+  const b = d.engine.addClip('trk_a', { start: 960, length: 960 });
+  d.engine.setClipAudio('trk_a', a.id, { hash: 'h1' });
+  d.engine.setClipAudio('trk_a', b.id, { hash: 'h2' });
+  crossfadeClipsCommand(d.engine, 'trk_a', a.id, b.id).apply();
+  const plain = d.engine.byId.trk_a;
+  const okAbut = plain.clips.find(c => c.id === a.id).audio.fadeOut === 0
+    && plain.clips.find(c => c.id === b.id).audio.fadeIn === 0;
+  const c = d.engine.addClip('trk_a', { start: 480, length: 960 });
+  crossfadeClipsCommand(d.engine, 'trk_a', a.id, c.id).apply();
+  const okNoAudio = plain.clips.find(x => x.id === a.id).audio.fadeOut === 0;
+  return okAbut && okNoAudio;
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
