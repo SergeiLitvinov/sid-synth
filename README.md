@@ -169,6 +169,7 @@ sid-synth/
 │   ├── clipEvents-test.html/js # grid/rt ↔ clip events conversions (21/21)
 │   ├── assetStore-test.html/js # IndexedDB audio assets (hash/dedup/gc) + peaks + import pipeline (25/25)
 │   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, missing badge (10/10)
+│   ├── resample-test.html/js # project-rate decode + buffer resample (9/9)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)

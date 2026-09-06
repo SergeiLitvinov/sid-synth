@@ -1,4 +1,5 @@
 import { hashBuffer, normalizeAsset } from './assetStore.js';
+import { decodeAtSampleRate } from './resample.js';
 
 // Audio file import (M4): read → hash → dedup → decode → store. The stored
 // Blob is the byte-identical source file; decode only feeds the metadata
@@ -56,7 +57,9 @@ export function decodeAudioBuffer(arrayBuffer, ctx) {
 // is true when identical bytes were already stored (no second Blob, no
 // re-decode — then audioBuffer is undefined), `audioBuffer` is the decoded
 // audio for peak metering and preview without decoding twice.
-export async function importAudioFile(file, { ctx, store } = {}) {
+// `targetSampleRate` decodes straight to the project rate via an offline
+// context; without it, the live context rate applies as before.
+export async function importAudioFile(file, { ctx, store, targetSampleRate } = {}) {
   if (!file) throw new Error('importAudio: no file');
   if (!store) throw new Error('importAudio: no asset store');
   const buf = await readFileBuffer(file);
@@ -65,10 +68,13 @@ export async function importAudioFile(file, { ctx, store } = {}) {
     const existing = await store.get(hash);
     return { hash, asset: normalizeAsset(existing), deduplicated: true, audioBuffer: undefined };
   }
-  if (!ctx) throw new Error('importAudio: no audio context for decode');
+  const target = typeof targetSampleRate === 'number' && targetSampleRate > 0 ? targetSampleRate : 0;
+  if (!ctx && !target) throw new Error('importAudio: no audio context for decode');
   let decoded;
   try {
-    decoded = await decodeAudioBuffer(buf, ctx);
+    decoded = target
+      ? await decodeAtSampleRate(buf, target)
+      : await decodeAudioBuffer(buf, ctx);
   } catch (e) {
     throw new Error('importAudio: cannot decode ' + (file.name || 'file'));
   }

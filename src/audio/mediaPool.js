@@ -1,6 +1,7 @@
 import { createAssetStore } from './assetStore.js';
 import { importAudioFile, isSupportedAudioFile, decodeAudioBuffer } from './audioImport.js';
 import { computePeaksStereo } from './peaks.js';
+import { projectSampleRate } from './resample.js';
 
 // Media pool panel (M4): file-picker + drag-and-drop import into the IndexedDB
 // asset store, metadata manifest round-tripped through the project JSON,
@@ -176,10 +177,16 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
     let skipped = 0;
     const manifest = readManifest().slice();
     const known = new Set(manifest.map(a => a && a.hash).filter(Boolean));
+    // Project-rate policy: decode straight to the context rate when known,
+    // otherwise fall back to the decode-context default.
+    let target = 0;
+    try { target = projectSampleRate(ctx); } catch (e) {}
     for (const file of files) {
       if (!isSupportedAudioFile(file)) { skipped++; continue; }
       try {
-        const { hash, asset, deduplicated: dup, audioBuffer } = await importAudioFile(file, { ctx, store: audioStore });
+        const { hash, asset, deduplicated: dup, audioBuffer } = await importAudioFile(file, {
+          ctx, store: audioStore, targetSampleRate: target || undefined,
+        });
         if (!known.has(hash)) {
           known.add(hash);
           manifest.push(asset);
