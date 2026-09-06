@@ -94,7 +94,7 @@ check('wave select runs updateTrack as a command', () => {
   const id = engine.tracks[engine.tracks.length - 1].id;
   const rows = [...container.querySelectorAll('.rec-track')];
   const row = rows.find(r => r.dataset.id === id);
-  const sel = row.querySelector('select');
+  const sel = row.querySelector('select:not(.rec-midi-ch)');
   sel.value = 'sawtooth';
   sel.dispatchEvent(new Event('change'));
   if (engine.byId[id].wave !== 'sawtooth') return false;
