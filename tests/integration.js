@@ -49,7 +49,8 @@
 // backlog #175: drum/step editor mode.
 // backlog M4: media pool (asset import UI).
 // backlog M4: audio clip UI (pool +CLIP, arranger waveform, piano roll editor).
-// 239 steps total.
+// backlog M4: audio input panel (device picker, monitor, meter).
+// 243 steps total.
 async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -2166,6 +2167,23 @@ async (page) => {
   });
   r.steps = r.steps.concat(r32persist.steps);
   r.steps.push({ name: 'r32: audio clip UI section ran', ok: true });
+
+  // 33. Audio input panel (M4 recording): device picker, MON toggle and
+  // meter render. Live capture is covered by audioInput-test (fake device).
+  const r33 = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const panel = document.getElementById('audioInput');
+    step('audio input panel exists', !!panel);
+    step('device picker exists', !!(panel && panel.querySelector('#inpDevice')));
+    step('MON toggle and meter exist',
+      !!(panel && panel.querySelector('#inpMon') && panel.querySelector('#inpMeter')));
+    return results;
+  });
+  r.steps = r.steps.concat(r33.steps);
+  r.steps.push({ name: 'r33: audio input section ran', ok: true });
 
   return r;
 }

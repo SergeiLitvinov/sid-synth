@@ -189,8 +189,8 @@
 
 ### Запись и playback
 
-- [ ] Input devices через `getUserMedia`, выбор mono/stereo channel, permission/error UX.
-- [ ] Input monitoring, input meter, gain warning и безопасная защита от feedback routing.
+- [x] Input devices через `getUserMedia`, выбор mono/stereo channel, permission/error UX (реализовано: `src/audio/audioInput.js` — `listInputDevices` (только audioinput), `requestInputStream` (deviceId-exact, echo/noise/AGC выключены по умолчанию), понятные ошибки без capture-API; панель `src/audio/inputUI.js` — селект устройств + refresh, статус ошибок; выбор не персистится (deviceId непереносимы). Тесты: новый `audioInput-test` 11/11 на fake-mic флагах.
+- [x] Input monitoring, input meter, gain warning и безопасная защита от feedback routing (реализовано: `createInputMonitor` — source→analyser→monitorGain→destination, метр тапается до гейна (уровни видны всегда), спикеры только по явному MON (по умолчанию выкл), gain 0–1.5 с клампом, красный пик >0.95; `stopStream` гасит треки; `dispose` чистит ноды и rAF. Все наборы зелёные (660/660).
 - [ ] MediaRecorder не использовать как единственный точный тракт: исследовать AudioWorklet PCM capture для sample-aligned записи.
 - [ ] Latency calibration и placement compensation с ручным offset fallback.
 - [ ] Punch in/out, count-in, takes/lane recording и loop recording takes.

@@ -32,6 +32,7 @@ import { ticksPerSecond } from './project/clipEvents.js';
 import { normalizeAsset } from './audio/assetStore.js';
 import { createAssetStore } from './audio/assetStore.js';
 import { createMediaPool } from './audio/mediaPool.js';
+import { createInputUI } from './audio/inputUI.js';
 
 console.log('SID Synth Modular loaded');
 
@@ -631,6 +632,13 @@ console.log('SID Synth Modular loaded');
         setAssets: (arr) => { projectAssets = arr; projectStore.markDirty(); },
         onAddClip: addAudioClipToActiveTrack,
       })
+    : null;
+
+  // Audio input (M4 recording): device picker + monitor + meter. Device
+  // selection is session-local and never persisted.
+  const audioInputEl = document.getElementById('audioInput');
+  const audioInput = audioInputEl
+    ? createInputUI({ container: audioInputEl, ctx, destination: masterGain })
     : null;
 
   router.drawConnections();

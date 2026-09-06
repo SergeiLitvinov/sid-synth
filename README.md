@@ -171,6 +171,7 @@ sid-synth/
 │   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, locate/replace, +CLIP, missing badge (16/16)
 │   ├── resample-test.html/js # project-rate decode + buffer resample (9/9)
 │   ├── audioEngine-test.html/js # clip voices: start/offset/catch-up/fades/stop (11/11)
+│   ├── audioInput-test.html/js # input devices, monitor gate, meter (11/11, нужны fake-mic флаги)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)
@@ -202,6 +203,8 @@ sid-synth/
 │   │   ├── peaksClient.js   #   async peaks API with sync fallback
 │   │   ├── resample.js      #   project-rate decode + buffer resample
 │   │   ├── waveform.js      #   waveform canvas rendering (pool + arranger)
+│   │   ├── audioInput.js    #   input devices, stream, monitor + meter
+│   │   ├── inputUI.js       #   input panel (picker, MON, meter)
 │   │   └── mediaPool.js     #   import/preview/delete/locate/replace/+CLIP panel
 │   ├── arranger/            # Linear timeline (DAW arranger canvas)
 │   │   ├── arrangerLayout.js #   pure geometry: ticks↔px, ruler, pattern/clip layout, snap
