@@ -177,8 +177,33 @@ check('title shows the missing count', async () => {
   manifest = [];
   await pool.refresh();
   const plain = pool.el.querySelector('.panel-title').textContent;
-  await teardown();
   return /2 missing/.test(titled) && plain === 'MEDIA POOL';
+});
+check('+CLIP forwards the asset to onAddClip', async () => {
+  const seen = [];
+  const el2 = document.createElement('div');
+  container.appendChild(el2);
+  let m2 = [];
+  const pool2 = createMediaPool({
+    container: el2, ctx, destination: ctx.destination, store,
+    getAssets: () => m2,
+    setAssets: (a) => { m2 = a; },
+    onAddClip: (asset) => seen.push(asset),
+  });
+  await pool2.importFiles([stubFile('clip.wav', 'audio/wav', makeWavBytes({ freq: 660 }))]);
+  const btn = el2.querySelector('.mp-addclip');
+  if (!btn) {
+    pool2.dispose();
+    el2.remove();
+    await teardown();
+    return false;
+  }
+  btn.click();
+  const ok = seen.length === 1 && seen[0].name === 'clip.wav' && typeof seen[0].hash === 'string';
+  pool2.dispose();
+  el2.remove();
+  await teardown();
+  return ok;
 });
 
 (async () => {

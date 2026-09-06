@@ -68,12 +68,12 @@
   `http://localhost:3000/tests/projectStore-test.html` (11/11, async debounce-тест требует Playwright/ожидания),
   `http://localhost:3000/tests/clipEvents-test.html` (21/21),
   `http://localhost:3000/tests/assetStore-test.html` (28/28),
-  `http://localhost:3000/tests/mediaPool-test.html` (15/15),
+  `http://localhost:3000/tests/mediaPool-test.html` (16/16),
   `http://localhost:3000/tests/resample-test.html` (9/9),
   `http://localhost:3000/tests/audioEngine-test.html` (11/11),
   `http://localhost:3000/tests/wavExport-test.html` (8/8) и
-  `http://localhost:3000/tests/arranger-test.html` (207/207) — без FAIL (итого 634/634).
-- E2E: `tests/integration.js` (225 шагов, 7 новых в r30 — drum editor; проверка в браузере потребуется при восстановлении Playwright MCP) гоняется браузерным харнессом (Playwright MCP)
+  `http://localhost:3000/tests/arranger-test.html` (215/215) — без FAIL (итого 643/643).
+- E2E: `tests/integration.js` (239 шагов: r30 — drum editor, r31 — media pool DOM, r32 — audio clip UI; полный прогон требует Node/MCP-браузер, ключевые flow r32 проверены headless через Python Playwright) гоняется браузерным харнессом (Playwright MCP)
   против живого приложения (порт 3000 или 3100) — без FAIL.
 - Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу
   (общий профиль даёт ложные фейлы — известный флак); ожидание `SUMMARY:` в DOM.

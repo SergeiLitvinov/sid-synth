@@ -765,6 +765,17 @@ button.btn-red:hover { background: #aa4444; color: #000; }
   z-index: 5;
   box-shadow: 0 0 8px var(--bcolor, #4af74a);
 }
+.arranger-clip-label { position: relative; z-index: 1; }
+.arranger-clip-audio { border-style: double; border-color: #6dc9ff; }
+.arranger-clip-wave {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.55;
+}
 .arranger-clip-edge {
   position: absolute;
   top: 0;
@@ -1157,4 +1168,28 @@ button.btn-red:hover { background: #aa4444; color: #000; }
 .mp-meta { color: #3a6a3a; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mp-del { min-width: 26px; }
 .media-pool.mp-dragover { outline: 2px dashed #4af74a; outline-offset: -2px; }
+
+/* ---- Piano roll audio clip editor (M4) ---- */
+.pr-audio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  background: #0a0f0a;
+  border: 1px solid #1a2a3a;
+}
+.pr-audio-name { color: #6dc9ff; font-size: 11px; letter-spacing: 1px; }
+.pr-audio-field { color: #3a6a3a; font-size: 10px; display: flex; align-items: center; gap: 4px; }
+.pr-audio-field input { width: 52px; background: #060a06; color: #4af74a; border: 1px solid #2a3a2a; font-size: 11px; }
+.pr-audio-clear {
+  margin-left: auto;
+  background: transparent;
+  color: #4af74a;
+  border: 1px solid #2a3a2a;
+  width: 20px;
+  height: 18px;
+  cursor: pointer;
+}
+.pr-audio-clear:hover { background: #4af74a; color: #000; }
 

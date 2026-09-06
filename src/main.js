@@ -27,6 +27,8 @@ import { createProjectStore } from './project/projectStore.js';
 import { serializeProject } from './project/serialize.js';
 import { createProjectId } from './project/defaultProject.js';
 import { createMarkerStore } from './project/markers.js';
+import { addClipCommand } from './project/trackCommands.js';
+import { ticksPerSecond } from './project/clipEvents.js';
 import { normalizeAsset } from './audio/assetStore.js';
 import { createAssetStore } from './audio/assetStore.js';
 import { createMediaPool } from './audio/mediaPool.js';
@@ -429,6 +431,9 @@ console.log('SID Synth Modular loaded');
   const trackEngine = createTrackEngine(recorderCtx, recorderDest, { audioStore: assetStore });
   const recorderEl = document.getElementById('recorder');
   const history = createHistory();
+  // Declared early: arranger/piano-roll cfg callbacks below close over it,
+  // and createArranger renders synchronously during construction.
+  let projectAssets = [];
 
   // WAV export (backlog #38): bounce the live mix through the master bus.
   const exportWav = (opts = {}) => renderWav({
@@ -448,14 +453,53 @@ console.log('SID Synth Modular loaded');
   // Linear arranger: ruler + track lanes + playhead on the unified transport.
   const arrangerEl = document.getElementById('arranger');
   const markers = createMarkerStore();
+  // Audio clip helpers (M4): manifest lookups and pool-to-track attach.
+  const getAssetName = (hash) => {
+    const found = projectAssets.find(a => a && a.hash === hash);
+    return (found && found.name) || (typeof hash === 'string' ? hash.slice(0, 8) : 'audio');
+  };
+  const getAudioPeaks = async (hash) => {
+    try {
+      const rec = await assetStore.get(hash);
+      return (rec && rec.peaks) || null;
+    } catch (e) {
+      return null;
+    }
+  };
+  // Add a pool asset as an audio clip on the active track at the next free
+  // position, sized from the asset duration. Undoable through history.
+  function addAudioClipToActiveTrack(asset) {
+    if (!asset || typeof asset.hash !== 'string' || !asset.hash) return;
+    const tracks = trackEngine.getTracks();
+    if (!tracks.length) return;
+    const targetId = (trackEngine.activeTrackId && tracks.some(t => t.id === trackEngine.activeTrackId))
+      ? trackEngine.activeTrackId
+      : tracks[0].id;
+    const target = tracks.find(t => t.id === targetId);
+    const nextStart = (target.clips || []).reduce((max, c) => Math.max(max, c.start + c.length), 0);
+    const tps = ticksPerSecond(trackEngine.bpm, trackEngine.ppq);
+    const clip = {
+      name: asset.name || 'Audio',
+      start: nextStart,
+      length: Math.max(480, Math.round((asset.duration || 1) * tps)),
+      events: [],
+      audio: { hash: asset.hash },
+    };
+    if (history) history.execute(addClipCommand(trackEngine, targetId, clip));
+    else trackEngine.addClip(targetId, clip);
+  }
   const pianoRollEl = document.getElementById('pianoRoll');
   const pianoRoll = pianoRollEl
-    ? createPianoRoll({ container: pianoRollEl, engine: trackEngine, transport, history })
+    ? createPianoRoll({ container: pianoRollEl, engine: trackEngine, transport, history, getAssetName })
     : null;
   const arranger = arrangerEl
     ? createArranger({
         container: arrangerEl, engine: trackEngine, transport, history, markers,
-        cfg: { onSelectionChange: (s) => { if (pianoRoll) pianoRoll.setSelection(s); } },
+        cfg: {
+          onSelectionChange: (s) => { if (pianoRoll) pianoRoll.setSelection(s); },
+          getAssetName,
+          getAudioPeaks,
+        },
       })
     : null;
 
@@ -484,7 +528,7 @@ console.log('SID Synth Modular loaded');
   // Media-pool manifest (M4): metadata only — binary audio lives in the
   // IndexedDB asset store. Mutated by the media pool import UI, persisted
   // here so save/load round-trips keep every referenced hash.
-  let projectAssets = [];
+  // (projectAssets itself is declared above the arranger wiring.)
 
   function captureProject() {
     if (!projectId) projectId = createProjectId();
@@ -585,6 +629,7 @@ console.log('SID Synth Modular loaded');
         store: assetStore,
         getAssets: () => projectAssets,
         setAssets: (arr) => { projectAssets = arr; projectStore.markDirty(); },
+        onAddClip: addAudioClipToActiveTrack,
       })
     : null;
 

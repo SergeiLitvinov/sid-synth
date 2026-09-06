@@ -48,7 +48,8 @@
 // backlog #174: pitch bend / modulation / sustain / CC.
 // backlog #175: drum/step editor mode.
 // backlog M4: media pool (asset import UI).
-// 230 steps total.
+// backlog M4: audio clip UI (pool +CLIP, arranger waveform, piano roll editor).
+// 239 steps total.
 async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -2057,6 +2058,114 @@ async (page) => {
   });
   r.steps = r.steps.concat(r31.steps);
   r.steps.push({ name: 'r31: media pool section ran', ok: true });
+
+  // 32. Audio clip UI (M4): synthesize a WAV in-page, import it through the
+  // pool file input, +CLIP it onto the active track, select it, edit gain.
+  const r32setup = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    // 0.1s 8kHz mono sine WAV, built by hand (no fixture files).
+    const n = 800;
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    wstr(0, 'RIFF');
+    v.setUint32(4, 36 + n * 2, true);
+    wstr(8, 'WAVE');
+    wstr(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true);
+    v.setUint32(28, 16000, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
+    wstr(36, 'data');
+    v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.floor(10000 * Math.sin((2 * Math.PI * 110 * i) / 8000)), true);
+    const dt = new DataTransfer();
+    dt.items.add(new File([buf], 'e2e-kick.wav', { type: 'audio/wav' }));
+    const input = document.querySelector('#mediaPool input[type=file]');
+    step('pool file input exists', !!input);
+    if (input) {
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return results;
+  });
+  r.steps = r.steps.concat(r32setup.steps);
+  await page.waitForTimeout(2500);
+  const r32 = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const row = document.querySelector('#mpList .mp-row');
+    step('imported row appears in the pool', !!row && (row.querySelector('.mp-name') || {}).textContent === 'e2e-kick.wav');
+    const add = row && row.querySelector('.mp-addclip');
+    step('row has a +CLIP button', !!add);
+    if (add) add.click();
+    return results;
+  });
+  r.steps = r.steps.concat(r32.steps);
+  await page.waitForTimeout(800);
+  const r32sel = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const block = [...document.querySelectorAll('.arranger-clip')]
+      .find(c => c.classList.contains('arranger-clip-audio'));
+    step('audio block appears in the arranger', !!block);
+    step('audio block carries a waveform canvas', !!(block && block.querySelector('canvas.arranger-clip-wave')));
+    if (block) {
+      const arr = document.getElementById('arranger');
+      const rect = arr.querySelector('.arranger-content').getBoundingClientRect();
+      const brect = block.getBoundingClientRect();
+      const cx = Math.min(Math.max(brect.left + 5, rect.left + 5), rect.left + 50);
+      block.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 8, pointerType: 'mouse', clientX: cx }));
+      block.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 8, pointerType: 'mouse', clientX: cx }));
+    }
+    return results;
+  });
+  r.steps = r.steps.concat(r32sel.steps);
+  await page.waitForTimeout(400);
+  const r32edit = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const row = document.querySelector('#pianoRoll .pr-audio');
+    step('piano roll audio editor appears', !!row);
+    const gain = row && row.querySelector('.pr-audio-gain');
+    if (gain) {
+      gain.value = '0.5';
+      gain.dispatchEvent(new Event('change', { bubbles: true }));
+      step('gain edit stages without errors', true);
+    } else {
+      step('gain edit stages without errors', false);
+    }
+    return results;
+  });
+  r.steps = r.steps.concat(r32edit.steps);
+  await page.waitForTimeout(2000);
+  const r32persist = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const saved = JSON.parse(localStorage.getItem('sidSynthProject') || 'null');
+    const clips = (saved && saved.tracks ? saved.tracks : []).flatMap(t => t.clips || []);
+    const audio = clips.filter(c => c.audio && c.audio.hash);
+    step('audio ref persists in the snapshot with edited gain',
+      audio.length === 1 && audio[0].audio.gain === 0.5,
+      audio.map(c => c.audio.gain));
+    return results;
+  });
+  r.steps = r.steps.concat(r32persist.steps);
+  r.steps.push({ name: 'r32: audio clip UI section ran', ok: true });
 
   return r;
 }

@@ -1668,6 +1668,12 @@ function prEngine(clips) {
       c.events = (events || []).map(ev => ({ ...ev })).sort((a, b) => (a.start || 0) - (b.start || 0));
       return true;
     },
+    setClipAudio: (id, clipId, audio) => {
+      const c = t.clips.find(x => x.id === clipId);
+      if (!c) return false;
+      c.audio = audio ? { ...audio } : null;
+      return true;
+    },
   };
 }
 
@@ -2790,6 +2796,102 @@ check('STEP: keys typed into inputs are ignored', () => {
   input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', bubbles: true }));
   document.body.removeChild(input);
   return engine.byId.trk_a.clips[0].events.length === 0;
+});
+
+// ---- audio clips (M4) -------------------------------------------------------
+check('layoutClips passes audio refs through (copied)', () => {
+  const t = track([], { clips: [{ id: 'c1', name: 'A', start: 0, length: 1920, color: null, audio: { hash: 'h1', gain: 0.5 } }] });
+  const clips = layoutClips(t, { pxPerQuarter: 48, ppq: 480 });
+  const plain = layoutClips(track([], { clips: [{ id: 'c2', name: 'B', start: 0, length: 1920, color: null }] }), { pxPerQuarter: 48, ppq: 480 });
+  return clips[0].audio && clips[0].audio.hash === 'h1' && clips[0].audio.gain === 0.5
+    && clips[0].audio !== t.clips[0].audio && plain[0].audio === null;
+});
+check('arranger badges audio clip blocks with asset name', () => {
+  const container = document.createElement('div');
+  createArranger({
+    container,
+    engine: fauxEngine([track([], { name: 'A', clips: [{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, color: null, audio: { hash: 'h1' } }] })]),
+    transport: fauxTransport(),
+    cfg: { bars: 2, getAssetName: (h) => (h === 'h1' ? 'kick.wav' : h) },
+  });
+  const block = container.querySelector('.arranger-clip');
+  return !!block && block.classList.contains('arranger-clip-audio')
+    && block.title.includes('kick.wav') && !!block.querySelector('canvas.arranger-clip-wave');
+});
+check('arranger MIDI blocks have no audio badge or waveform', () => {
+  const container = document.createElement('div');
+  createArranger({
+    container,
+    engine: fauxEngine([track([], { name: 'A', clips: [{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, color: null }] })]),
+    transport: fauxTransport(),
+    cfg: { bars: 2 },
+  });
+  const block = container.querySelector('.arranger-clip');
+  return !!block && !block.classList.contains('arranger-clip-audio')
+    && !block.querySelector('canvas.arranger-clip-wave');
+});
+check('arranger fills clip waveforms from cached peaks', () => {
+  const container = document.createElement('div');
+  const seen = [];
+  createArranger({
+    container,
+    engine: fauxEngine([track([], { name: 'A', clips: [{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, color: null, audio: { hash: 'h2' } }] })]),
+    transport: fauxTransport(),
+    cfg: { bars: 2, getAudioPeaks: async (h) => { seen.push(h); return [0.5, 1, 0.25]; } },
+  });
+  const wave = container.querySelector('canvas.arranger-clip-wave');
+  return !!wave && seen.length === 1 && seen[0] === 'h2';
+});
+check('piano roll shows the audio editor for audio clips', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [], audio: { hash: 'h1', gain: 0.7 } }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+    getAssetName: (h) => (h === 'h1' ? 'kick.wav' : h),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const row = container.querySelector('.pr-audio');
+  return !!row && row.textContent.includes('kick.wav')
+    && row.querySelector('.pr-audio-gain').value === '0.7'
+    && !!row.querySelector('.pr-audio-clear');
+});
+check('piano roll hides the audio editor for MIDI clips', () => {
+  const container = document.createElement('div');
+  const pr = createPianoRoll({
+    container,
+    engine: prEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [] }]),
+    transport: fauxTransport(),
+    history: createHistory(),
+  });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  return !container.querySelector('.pr-audio .pr-audio-name');
+});
+check('piano roll audio gain commits through history (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [], audio: { hash: 'h1', gain: 1 } }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const gain = container.querySelector('.pr-audio-gain');
+  gain.value = '0.5';
+  gain.dispatchEvent(new Event('change', { bubbles: true }));
+  if (engine.byId.trk_a.clips[0].audio.gain !== 0.5) return false;
+  history.undo();
+  return engine.byId.trk_a.clips[0].audio.gain === 1;
+});
+check('piano roll audio clear detaches the reference (undoable)', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, events: [], audio: { hash: 'h1' } }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  container.querySelector('.pr-audio-clear').click();
+  if (engine.byId.trk_a.clips[0].audio !== null) return false;
+  history.undo();
+  const back = engine.byId.trk_a.clips[0].audio;
+  return !!back && back.hash === 'h1' && !!container.querySelector('.pr-audio .pr-audio-name');
 });
 
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;

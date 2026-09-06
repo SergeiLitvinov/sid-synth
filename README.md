@@ -165,16 +165,16 @@ sid-synth/
 │   ├── musicalTime-test.html/js # PPQ / tempo map / time signature (26/26)
 │   ├── transport-test.html/js # unified transport + step engine adapter + seek + arranged-clip restart + onSeek chase + loop locators + project end (48/48)
 │   ├── projectStore-test.html/js # unified project snapshot + legacy migration (11/11)
-│   ├── arranger-test.html/js #   arranger layout + clips + mini-notes + trim/split/dup/loop + multi-select + markers + mute/solo + rename + reorder + color + monitor + resize + folder/collapse + piano roll UI + quantize + transpose + duplicate + legato + fixed length + humanize + preview + step input (207/207)
+│   ├── arranger-test.html/js #   arranger layout + clips + mini-notes + trim/split/dup/loop + multi-select + markers + mute/solo + rename + reorder + color + monitor + resize + folder/collapse + piano roll UI + quantize + transpose + duplicate + legato + fixed length + humanize + preview + step input + audio clips/waveform/editor (215/215)
 │   ├── clipEvents-test.html/js # grid/rt ↔ clip events conversions (21/21)
 │   ├── assetStore-test.html/js # IndexedDB audio assets (hash/dedup/gc) + peaks + worker LOD + import pipeline (28/28)
-│   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, locate/replace, missing badge (15/15)
+│   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, locate/replace, +CLIP, missing badge (16/16)
 │   ├── resample-test.html/js # project-rate decode + buffer resample (9/9)
 │   ├── audioEngine-test.html/js # clip voices: start/offset/catch-up/fades/stop (11/11)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)
-│   └── integration.js      #   E2E против живого приложения (225 шагов, Playwright)
+│   └── integration.js      #   E2E против живого приложения (239 шагов, Playwright)
 ├── src/
 │   ├── main.js             # Core logic, drag-drop, visualization
 │   ├── services/            # Services (router, presets, keyboard, MIDI, etc.)
@@ -201,7 +201,8 @@ sid-synth/
 │   │   ├── peaksWorker.js   #   off-thread multi-level peak computation
 │   │   ├── peaksClient.js   #   async peaks API with sync fallback
 │   │   ├── resample.js      #   project-rate decode + buffer resample
-│   │   └── mediaPool.js     #   import/preview/delete/locate/replace panel
+│   │   ├── waveform.js      #   waveform canvas rendering (pool + arranger)
+│   │   └── mediaPool.js     #   import/preview/delete/locate/replace/+CLIP panel
 │   ├── arranger/            # Linear timeline (DAW arranger canvas)
 │   │   ├── arrangerLayout.js #   pure geometry: ticks↔px, ruler, pattern/clip layout, snap
 │   │   └── arranger.js      #   createArranger UI: ruler, lanes, playhead, zoom, clips

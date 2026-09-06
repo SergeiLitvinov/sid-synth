@@ -27,7 +27,7 @@ import { fixedLengthEvents } from './fixedLength.js';
 import { humanizeEvents } from './humanize.js';
 import { previewEvents } from './preview.js';
 import { clipEventsToGrid, gridToClipEvents } from '../project/clipEvents.js';
-import { editClipEventsCommand } from '../project/trackCommands.js';
+import { editClipEventsCommand, setClipAudioCommand } from '../project/trackCommands.js';
 
 const CELL_W = 18;
 const CELL_H = 12;
@@ -36,9 +36,12 @@ const VEL_H = 40;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 
-export function createPianoRoll({ container, engine, transport, history }) {
+export function createPianoRoll({ container, engine, transport, history, getAssetName }) {
   const el = container;
   el.classList.add('piano-roll');
+  const resolveAssetName = typeof getAssetName === 'function'
+    ? getAssetName
+    : (hash) => (typeof hash === 'string' ? hash.slice(0, 8) : 'audio');
 
   const header = document.createElement('div');
   header.className = 'pr-header';
@@ -265,6 +268,12 @@ export function createPianoRoll({ container, engine, transport, history }) {
   const gridWrap = document.createElement('div');
   gridWrap.className = 'pr-wrap';
   el.append(gridWrap);
+
+  // Audio clip editor row (M4): shown when the selected clip carries an
+  // audio reference. Gain/fades commit through setClipAudioCommand.
+  const audioRow = document.createElement('div');
+  audioRow.className = 'pr-audio';
+  el.insertBefore(audioRow, gridWrap);
 
   let sel = null; // { trackId, clipId }
   // Zoom and snap state (backlog #31). cellW/cellH are the current pixel cell
@@ -607,8 +616,67 @@ export function createPianoRoll({ container, engine, transport, history }) {
     while (node.firstChild) node.removeChild(node.firstChild);
   }
 
+  // Audio clip editor (M4): asset name + clip gain + edge fades for the
+  // selected clip's audio reference. Commits through the command history
+  // so undo/redo work; the note grid below keeps editing layered MIDI.
+  function renderAudioRow(clip) {
+    const ref = clip.audio;
+    const commit = (patch) => {
+      const next = { hash: ref.hash, offset: ref.offset || 0, gain: ref.gain === undefined ? 1 : ref.gain, fadeIn: ref.fadeIn || 0, fadeOut: ref.fadeOut || 0, ...patch };
+      if (history && history.execute) {
+        history.execute(setClipAudioCommand(engine, sel.trackId, clip.id, next));
+      } else {
+        engine.setClipAudio(sel.trackId, clip.id, next);
+        render();
+      }
+    };
+    const label = document.createElement('span');
+    label.className = 'pr-audio-name';
+    label.textContent = 'AUDIO · ' + resolveAssetName(ref.hash);
+    audioRow.appendChild(label);
+    const mkNum = (cls, title, value, min, max, step, apply) => {
+      const wrap = document.createElement('label');
+      wrap.className = 'pr-audio-field';
+      wrap.textContent = title;
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.className = cls;
+      input.min = String(min);
+      input.max = String(max);
+      input.step = String(step);
+      input.value = String(value);
+      input.addEventListener('change', () => {
+        const v = parseFloat(input.value);
+        if (!(v >= min && v <= max)) {
+          input.value = String(value);
+          return;
+        }
+        apply(v);
+      });
+      wrap.appendChild(input);
+      audioRow.appendChild(wrap);
+    };
+    mkNum('pr-audio-gain', 'gain', ref.gain === undefined ? 1 : ref.gain, 0, 2, 0.1, (v) => commit({ gain: v }));
+    mkNum('pr-audio-fadein', 'fade in (s)', ref.fadeIn || 0, 0, 30, 0.05, (v) => commit({ fadeIn: v }));
+    mkNum('pr-audio-fadeout', 'fade out (s)', ref.fadeOut || 0, 0, 30, 0.05, (v) => commit({ fadeOut: v }));
+    const clear = document.createElement('button');
+    clear.className = 'pr-audio-clear';
+    clear.textContent = '×';
+    clear.title = 'Detach audio from this clip (keeps the notes)';
+    clear.addEventListener('click', () => {
+      if (history && history.execute) {
+        history.execute(setClipAudioCommand(engine, sel.trackId, clip.id, null));
+      } else {
+        engine.setClipAudio(sel.trackId, clip.id, null);
+        render();
+      }
+    });
+    audioRow.appendChild(clear);
+  }
+
   function render() {
     clearChildren(gridWrap);
+    clearChildren(audioRow);
     auditionOff();
     selected = new Set();
     noteEls = new Map();
@@ -627,6 +695,7 @@ export function createPianoRoll({ container, engine, transport, history }) {
       title.textContent = drumMode ? 'DRUM GRID' : 'PIANO ROLL';
       return;
     }
+    if (clip.audio && clip.audio.hash) renderAudioRow(clip);
 
     // --- DRUM / STEP EDITOR MODE (backlog #175) ---
     if (drumMode) {

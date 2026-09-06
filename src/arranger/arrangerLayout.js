@@ -55,13 +55,15 @@ export function contentWidthTicks(tempoMap, bars) {
 }
 
 // MIDI clip geometry: each clip spans [start, start+length] ticks on the shared
-// timeline. Returns { id, name, color, x, width, startTicks, lengthTicks }.
-// clips without a color fall back to the track color in the caller.
+// timeline. Returns { id, name, color, x, width, startTicks, lengthTicks, audio }.
+// clips without a color fall back to the track color in the caller; audio is
+// passed through (copied) so the renderer can badge audio clips.
 export function layoutClips(track, { pxPerQuarter = 48, ppq = 480, originTicks = 0 } = {}) {
   return (track.clips || []).map(clip => ({
     id: clip.id,
     name: clip.name,
     color: clip.color || track.color || null,
+    audio: clip.audio ? { ...clip.audio } : null,
     startTicks: clip.start,
     lengthTicks: clip.length,
     x: ticksToX(clip.start, { pxPerQuarter, ppq, originTicks }),

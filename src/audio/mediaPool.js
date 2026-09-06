@@ -2,6 +2,7 @@ import { createAssetStore, hashBuffer, collectReferencedHashes } from './assetSt
 import { importAudioFile, isSupportedAudioFile, decodeAudioBuffer } from './audioImport.js';
 import { computePeaksAsync } from './peaksClient.js';
 import { projectSampleRate } from './resample.js';
+import { drawWaveform } from './waveform.js';
 
 // Media pool panel (M4): file-picker + drag-and-drop import into the IndexedDB
 // asset store, metadata manifest round-tripped through the project JSON,
@@ -28,12 +29,13 @@ function extOf(name) {
   return dot >= 0 ? s.slice(dot + 1).toLowerCase() : '';
 }
 
-export function createMediaPool({ container, ctx, destination, store, getAssets, setAssets } = {}) {
+export function createMediaPool({ container, ctx, destination, store, getAssets, setAssets, onAddClip } = {}) {
   const el = container;
   el.classList.add('media-pool');
   const audioStore = store || createAssetStore();
   const readManifest = typeof getAssets === 'function' ? getAssets : () => [];
   const writeManifest = typeof setAssets === 'function' ? setAssets : () => {};
+  const addClipToTrack = typeof onAddClip === 'function' ? onAddClip : null;
   const buffers = new Map();
   const peaksCache = new Map();
   let playingHash = null;
@@ -77,25 +79,6 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
   function setStatus(text) {
     statusText = text;
     status.textContent = text;
-  }
-
-  function drawPeaks(canvas, peaks) {
-    const w = canvas.width;
-    const h = canvas.height;
-    const g = canvas.getContext('2d');
-    if (!g) return;
-    g.clearRect(0, 0, w, h);
-    g.fillStyle = '#0a0f0a';
-    g.fillRect(0, 0, w, h);
-    if (!peaks || !peaks.length) return;
-    g.fillStyle = '#4af74a';
-    const n = peaks.length;
-    const bw = Math.max(1, w / n);
-    for (let i = 0; i < n; i++) {
-      const v = Math.max(0, Math.min(1, peaks[i]));
-      const bh = Math.max(1, v * h);
-      g.fillRect(i * bw, (h - bh) / 2, Math.max(1, bw - 0.5), bh);
-    }
   }
 
   function updatePlayButtons() {
@@ -340,7 +323,7 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
       wave.width = 120;
       wave.height = 28;
       const peaks = (rec && rec.peaks) || peaksCache.get(hash);
-      drawPeaks(wave, peaks);
+      drawWaveform(wave, peaks);
 
       const info = document.createElement('div');
       info.className = 'mp-info';
@@ -362,6 +345,20 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
       del.addEventListener('click', () => { removeAsset(hash).catch(err => setStatus(err.message)); });
 
       row.append(play, wave, info, del);
+      if (!missing && addClipToTrack) {
+        const add = document.createElement('button');
+        add.className = 'rec-btn mp-addclip';
+        add.textContent = '+CLIP';
+        add.title = 'Add as an audio clip on the active track';
+        add.addEventListener('click', () => {
+          try {
+            addClipToTrack(asset);
+          } catch (err) {
+            setStatus(err.message);
+          }
+        });
+        row.append(add);
+      }
       if (missing) {
         const locate = document.createElement('button');
         locate.className = 'rec-btn mp-locate';

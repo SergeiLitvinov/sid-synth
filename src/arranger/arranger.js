@@ -5,6 +5,7 @@
 
 import { computeRuler, contentWidthTicks, layoutTrackBlocks, layoutClips, layoutClipNotes, ticksToX, xToTicks, snapTicks } from './arrangerLayout.js';
 import { addClipCommand, moveClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, setTrackFlagCommand, renameTrackCommand, reorderTrackCommand, updateTrackCommand, resizeTrackCommand } from '../project/trackCommands.js';
+import { drawWaveform } from '../audio/waveform.js';
 import { addMarkerCommand, removeMarkerCommand } from '../project/markerCommands.js';
 
 const DEFAULT_ZOOM = 48;      // px per quarter note
@@ -27,6 +28,8 @@ export function createArranger({ container, engine, transport, history, markers,
   let anchor = null;   // { trackId, clipId } last-clicked clip (range anchor)
   let drag = null;     // live drag state: { trackId, clipId, startTicks, dxTicks, clips }
   let resize = null;   // live trim state: { trackId, clipId, edge, grabTicks, startTicks, endTicks }
+  let renderGen = 0;   // bumped per render; async waveform fills check it
+  const waveCache = new Map(); // asset hash -> peaks array (arranger lifetime)
 
   // ---- selection helpers ----------------------------------------------
   function isSelected(trackId, clipId) {
@@ -479,6 +482,7 @@ export function createArranger({ container, engine, transport, history, markers,
   }
 
   function render() {
+    renderGen++;
     const ppq = transport.ppq || 480;
     const tempoMap = transport.tempoMap;
     const tracks = engine.getTracks() || [];
@@ -783,11 +787,40 @@ export function createArranger({ container, engine, transport, history, markers,
           block.style.left = c.x + 'px';
           block.style.width = c.width + 'px';
           block.style.setProperty('--bcolor', c.color || t.color);
-          block.textContent = c.name;
+          const clipLabel = document.createElement('span');
+          clipLabel.className = 'arranger-clip-label';
+          clipLabel.textContent = c.name;
+          block.appendChild(clipLabel);
           block.title = c.name + ' · ' + c.startTicks + ' → ' + (c.startTicks + c.lengthTicks) + ' ticks';
           block.dataset.track = t.id;
           if (isSelected(t.id, c.id)) block.classList.add('selected');
           if (drag && drag.trackId === t.id && drag.clipId === c.id) block.classList.add('dragging');
+          // Audio clips (M4): distinct badge + asset name, waveform canvas
+          // filled async from cached peaks (never blocks the render).
+          const audioHash = c.audio && c.audio.hash;
+          if (audioHash) {
+            block.classList.add('arranger-clip-audio');
+            const assetName = typeof cfg.getAssetName === 'function' ? cfg.getAssetName(audioHash) : audioHash;
+            block.title = c.name + ' · 🔊 ' + assetName;
+            const gen = renderGen;
+            const wave = document.createElement('canvas');
+            wave.className = 'arranger-clip-wave';
+            wave.width = Math.max(1, Math.round(c.width));
+            wave.height = 32;
+            block.appendChild(wave);
+            const draw = (peaks) => {
+              if (gen !== renderGen || !wave.isConnected) return;
+              drawWaveform(wave, peaks, { color: '#6dc9ff', background: 'transparent' });
+            };
+            if (waveCache.has(audioHash)) {
+              draw(waveCache.get(audioHash));
+            } else if (typeof cfg.getAudioPeaks === 'function') {
+              cfg.getAudioPeaks(audioHash).then(peaks => {
+                if (peaks && peaks.length) waveCache.set(audioHash, peaks);
+                draw(peaks);
+              }).catch(() => {});
+            }
+          }
           block.addEventListener('pointerdown', (e) => onClipPointerDown(e, block, t.id, c.id));
           lane.appendChild(block);
 
