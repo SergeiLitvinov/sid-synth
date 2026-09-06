@@ -1,6 +1,7 @@
 import { SCHEMA_VERSION, defaultProject, defaultTrackData, defaultClip } from './defaultProject.js';
 import { normalizeMarker } from './markers.js';
 import { normalizeAsset } from '../audio/assetStore.js';
+import { normalizeAudioRef } from '../audio/audioEngine.js';
 
 // --- validation -----------------------------------------------------------
 // Throws with a descriptive message on any structural problem. Kept strict
@@ -177,6 +178,7 @@ export function normalizeClip(c) {
     start: typeof src.start === 'number' && src.start >= 0 ? src.start : base.start,
     length: typeof src.length === 'number' && src.length > 0 ? src.length : base.length,
     events: Array.isArray(src.events) ? src.events.slice() : [],
+    audio: normalizeAudioRef(src.audio),
   };
 }
 

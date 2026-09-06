@@ -423,7 +423,10 @@ console.log('SID Synth Modular loaded');
   recorderDest.gain.value = 0.7;
   recorderDest.connect(masterGain);
 
-  const trackEngine = createTrackEngine(recorderCtx, recorderDest);
+  // Binary audio lives in one IndexedDB store shared by the media pool UI
+  // and the track engine's clip-audio playback.
+  const assetStore = createAssetStore();
+  const trackEngine = createTrackEngine(recorderCtx, recorderDest, { audioStore: assetStore });
   const recorderEl = document.getElementById('recorder');
   const history = createHistory();
 
@@ -571,9 +574,8 @@ console.log('SID Synth Modular loaded');
   if (recorderUI) recorderUI.renderAll();
   if (arranger) arranger.render();
 
-  // Media pool (M4): IndexedDB asset store + import UI. Created after restore
-  // so the first refresh already sees the restored assets manifest.
-  const assetStore = createAssetStore();
+  // Media pool (M4): import UI over the shared asset store. Created after
+  // restore so the first refresh already sees the restored assets manifest.
   const mediaPoolEl = document.getElementById('mediaPool');
   const mediaPool = mediaPoolEl
     ? createMediaPool({

@@ -32,12 +32,14 @@ export function createStepEngineAdapter(engine, transport) {
     engine._loopPos = 0;
     engine._loopCount = 0;
     engine.tracks.forEach(t => t.voice.allOff(engine.ctx.currentTime));
+    if (typeof engine._stopAudio === 'function') engine._stopAudio();
   });
 
   transport.onSeek(({ pos, playing }) => {
     if (!playing) return;
     // Kill voices that were sounding at the old position to avoid bleed.
     engine.tracks.forEach(t => t.voice.allOff(engine.ctx.currentTime));
+    if (typeof engine._stopAudio === 'function') engine._stopAudio();
     // Sync engine clock to the transport's rebased clock.
     engine._startMs = transport._startMs;
     engine._playStartCtx = transport._playStartCtx;
@@ -50,6 +52,9 @@ export function createStepEngineAdapter(engine, transport) {
     engine._cursorLoopAbs = transport._playStartCtx + engine._loopCount * engine.loopDur;
     // Reset linear playback flags so events before the seek can be rescheduled.
     engine._resetLinearPlayback();
+    // ...then immediately retire the finished ones, so the scheduler does
+    // not replay them from the top (it cannot tell a seek from jitter).
+    if (typeof engine._markPastLinear === 'function') engine._markPastLinear(pos);
     // Reset RT event pointers to the new loop-relative position.
     engine.tracks.forEach(t => {
       t.rt.forEach(ev => {

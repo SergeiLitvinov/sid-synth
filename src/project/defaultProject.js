@@ -27,6 +27,7 @@ export function defaultClip(cfg = {}) {
     start: cfg.start === undefined ? 0 : cfg.start,
     length: cfg.length === undefined ? DEFAULT_CLIP_LENGTH_TICKS : cfg.length,
     events: Array.isArray(cfg.events) ? cfg.events.slice() : [],
+    audio: cfg.audio && typeof cfg.audio === 'object' ? { ...cfg.audio } : null,
   };
 }
 

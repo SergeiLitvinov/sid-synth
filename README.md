@@ -158,8 +158,8 @@ sid-synth/
 ├── tests/                  # Браузерные тесты без Node:
 │   ├── smoke.html/js       #   smoke на реальном AudioContext (10/10)
 │   ├── mock-test.html/js   #   unit-эквивалент на mockAudioContext (11/11)
-│   ├── track-test.html/js  #   трек-движок/рекордер + folder/collapse + full-song clips + setClipEvents + inserts/device chain + audition when + record mode/quantize + chaseToTick + midiChannel routing + pitch bend/mod/sustain (112/112)
-│   ├── project-test.html/js#   versioned project serialize/migrate round-trip + markers + mute/solo + folders + inserts + midiChannel + assets manifest (41/41)
+│   ├── track-test.html/js  #   трек-движок/рекордер + folder/collapse + full-song clips + setClipEvents + inserts/device chain + audition when + record mode/quantize + chaseToTick + midiChannel routing + pitch bend/mod/sustain + clip audio playback (121/121)
+│   ├── project-test.html/js#   versioned project serialize/migrate round-trip + markers + mute/solo + folders + inserts + midiChannel + assets manifest + clip audio refs (43/43)
 │   ├── history-test.html/js #   undo/redo + track commands (28/28)
 │   ├── recorderUI-test.html/js # recorder panel wiring through history + INS insert editor (27/27)
 │   ├── musicalTime-test.html/js # PPQ / tempo map / time signature (26/26)
@@ -170,6 +170,7 @@ sid-synth/
 │   ├── assetStore-test.html/js # IndexedDB audio assets (hash/dedup/gc) + peaks + worker LOD + import pipeline (28/28)
 │   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, locate/replace, missing badge (15/15)
 │   ├── resample-test.html/js # project-rate decode + buffer resample (9/9)
+│   ├── audioEngine-test.html/js # clip voices: start/offset/catch-up/fades/stop (11/11)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)

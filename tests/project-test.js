@@ -397,6 +397,26 @@ check('parseProject normalizes missing and partial assets', () => {
   return Array.isArray(missing.assets) && missing.assets.length === 0
     && partial.assets.length === 1 && partial.assets[0].hash === 'h2' && partial.assets[0].name === 'audio';
 });
+check('normalizeClip keeps valid clip audio refs', () => {
+  const p = parseProject({
+    schemaVersion: 1, name: 'x', tempo: 120,
+    rack: { components: [], connections: [] },
+    tracks: [{ id: 'trk_1', grid: [], rt: [], clips: [
+      { id: 'c1', start: 1920, length: 960, events: [], audio: { hash: 'h1', offset: 0.5, gain: 0.7, fadeIn: 0.1, fadeOut: 0.2 } },
+    ] }],
+  });
+  const audio = p.tracks[0].clips[0].audio;
+  return !!audio && audio.hash === 'h1' && audio.offset === 0.5 && audio.gain === 0.7
+    && audio.fadeIn === 0.1 && audio.fadeOut === 0.2;
+});
+check('normalizeClip drops invalid clip audio to null', () => {
+  const mk = (audio) => parseProject({
+    schemaVersion: 1, name: 'x', tempo: 120,
+    rack: { components: [], connections: [] },
+    tracks: [{ id: 'trk_1', grid: [], rt: [], clips: [{ id: 'c1', start: 0, length: 960, events: [], audio }] }],
+  }).tracks[0].clips[0].audio;
+  return mk(undefined) === null && mk(null) === null && mk({ name: 'no-hash' }) === null;
+});
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {

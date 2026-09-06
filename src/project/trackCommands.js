@@ -390,6 +390,30 @@ export function editClipEventsCommand(engine, id, clipId, events) {
   };
 }
 
+// Attach/detach a clip's audio reference (M4). Captures the previous
+// reference on first apply so undo restores it; redo re-applies the new one.
+export function setClipAudioCommand(engine, id, clipId, audio) {
+  let before = null;
+  let applied = false;
+  return {
+    label: audio ? 'Set clip audio' : 'Clear clip audio',
+    apply() {
+      const t = engine.byId[id];
+      const clip = t && t.clips.find(c => c.id === clipId);
+      if (!clip) return;
+      if (!applied) {
+        before = clip.audio ? { ...clip.audio } : null;
+        applied = true;
+      }
+      engine.setClipAudio(id, clipId, audio);
+    },
+    undo() {
+      if (!applied) return;
+      engine.setClipAudio(id, clipId, before);
+    },
+  };
+}
+
 // Insert devices (backlog #32). Commands mutate the descriptor list through the
 // engine; TrackVoices rebuilds the audio chain from the list on each apply.
 export function addInsertCommand(engine, id, type, params) {

@@ -4,6 +4,7 @@ import {
   defaultTrackConfig,
   STEPS_PER_LOOP,
 } from '../src/tracks/trackEngine.js';
+import { setClipAudioCommand } from '../src/project/trackCommands.js';
 
 const results = document.getElementById('results');
 const summary = document.getElementById('summary');
@@ -30,7 +31,15 @@ function check(name, fn) {
 function makeFixture(bpm = 120) {
   const ctx = createMockAudioContext();
   let now = 0;
-  const engine = createTrackEngine(ctx, ctx.destination, { bpm });
+  // Fake clip-audio engine: records playClip/stopAll calls deterministically
+  // (real AudioBufferSources cannot run on the mock context).
+  const audioCalls = [];
+  const fakeAudio = {
+    calls: audioCalls,
+    async playClip(args) { audioCalls.push({ ...args }); return { stop() {} }; },
+    stopAll() { audioCalls.push({ stopAll: true }); },
+  };
+  const engine = createTrackEngine(ctx, ctx.destination, { bpm, audioEngine: fakeAudio });
   engine._setClock(() => now);
   const track = engine.addTrack({ name: 'T1', id: 'trk_a' });
   engine.activeTrackId = 'trk_a';
@@ -40,7 +49,7 @@ function makeFixture(bpm = 120) {
   const origOff = track.voice.noteOff.bind(track.voice);
   track.voice.noteOff = (note, at) => { spy.push({ note, at, type: 'off' }); origOff(note, at); };
   const driver = {
-    engine, track, ctx, spy,
+    engine, track, ctx, spy, audioCalls,
     set(ms) { now = ms; },
     play() {
       engine.play();
@@ -1148,6 +1157,127 @@ check('engine.routePitchBend routes to matching tracks', () => {
   d.engine.routePitchBend(null, 0.5);
   const after = v.voices.find(x => x.activeNote === 'C4')?.osc?.frequency?.value;
   return after > before;
+});
+
+// --- audio clips (M4) ------------------------------------------------------
+check('setClipAudio attaches, normalizes and clears audio refs', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 1920 });
+  if (!d.engine.setClipAudio('trk_a', clip.id, { hash: 'h1', offset: 1, gain: 0.5 })) return false;
+  const got = d.engine.byId.trk_a.clips.find(c => c.id === clip.id).audio;
+  if (!got || got.hash !== 'h1' || got.offset !== 1 || got.gain !== 0.5 || got.fadeIn !== 0 || got.fadeOut !== 0) return false;
+  if (!d.engine.setClipAudio('trk_a', clip.id, null)) return false;
+  return d.engine.byId.trk_a.clips.find(c => c.id === clip.id).audio === null
+    && d.engine.setClipAudio('trk_a', 'missing', { hash: 'h' }) === false;
+});
+check('getTracks preserves clip audio refs', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 1920 });
+  d.engine.setClipAudio('trk_a', clip.id, { hash: 'h9', gain: 0.7 });
+  const found = d.engine.getTracks()[0].clips.find(c => c.id === clip.id);
+  return !!found && !!found.audio && found.audio.hash === 'h9' && found.audio.gain === 0.7;
+});
+check('scheduler plays audio clips once with clip bounds', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 960, events: [] });
+  d.engine.setClipAudio('trk_a', clip.id, { hash: 'h1', offset: 0.5, gain: 0.7, fadeIn: 0.1, fadeOut: 0.2 });
+  d.play();
+  for (let i = 0; i < 25; i++) d.advanceAndTick(100); // 2.5s: clip at 2.0s fires
+  const calls = d.audioCalls.filter(c => c.hash === 'h1');
+  if (calls.length !== 1) return false;
+  const a = calls[0];
+  for (let i = 0; i < 20; i++) d.advanceAndTick(100); // to 4.5s: no replay
+  return d.audioCalls.filter(c => c.hash === 'h1').length === 1
+    && Math.abs(a.when - (d.engine._playStartCtx + 2)) < 1e-9
+    && a.offset === 0.5 && a.duration === 1 && a.gain === 0.7
+    && a.fadeIn === 0.1 && a.fadeOut === 0.2
+    && a.destination === d.track.voice.insertIn;
+});
+check('scheduler skips audio on disabled tracks', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 960, events: [] });
+  d.engine.setClipAudio('trk_a', clip.id, { hash: 'h1' });
+  d.engine.updateTrack('trk_a', { enabled: false });
+  d.play();
+  for (let i = 0; i < 25; i++) d.advanceAndTick(100);
+  return d.audioCalls.filter(c => c.hash === 'h1').length === 0;
+});
+check('finished audio clips do not replay after seek', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 960, events: [] });
+  d.engine.setClipAudio('trk_a', clip.id, { hash: 'h1' });
+  d.play();
+  for (let i = 0; i < 40; i++) d.advanceAndTick(100); // 4.0s: clip (2-3s) done
+  if (d.audioCalls.filter(c => c.hash === 'h1').length !== 1) return false;
+  // Adapter seek sequence past the clip: reset flags, chase (claims the
+  // started clip and attempts the remainder — a real engine trims it to
+  // nothing), then ticks must not reschedule from the top.
+  d.set(4000);
+  d.engine._startMs = 4000 - 10000;
+  d.engine.tracks.forEach(t => (t.clips || []).forEach(c => delete c._scheduledAudio));
+  d.engine.chaseToTick(9600);
+  const afterChase = d.audioCalls.filter(c => c.hash === 'h1').length;
+  for (let i = 0; i < 10; i++) d.advanceAndTick(100);
+  return afterChase === 2 && d.audioCalls.filter(c => c.hash === 'h1').length === 2;
+});
+check('stop() silences clip audio voices', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 960, events: [] });
+  d.engine.setClipAudio('trk_a', clip.id, { hash: 'h1' });
+  d.play();
+  d.engine.stop();
+  return d.audioCalls.some(c => c.stopAll === true);
+});
+check('chase restarts audible audio with the clip region and flags it', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [] });
+  d.engine.setClipAudio('trk_a', clip.id, { hash: 'h1', offset: 0.25 });
+  d.play();
+  for (let i = 0; i < 10; i++) d.advanceAndTick(100); // 1.0s, before the clip
+  if (d.audioCalls.filter(c => c.hash === 'h1').length !== 0) return false;
+  d.engine.chaseToTick(2880); // 3.0s, inside the 2-4s clip region
+  const calls = d.audioCalls.filter(c => c.hash === 'h1');
+  if (calls.length !== 1) return false;
+  for (let i = 0; i < 10; i++) d.advanceAndTick(100);
+  return d.audioCalls.filter(c => c.hash === 'h1').length === 1
+    && Math.abs(calls[0].duration - 2) < 1e-9 && calls[0].offset === 0.25
+    && clip._scheduledAudio === true;
+});
+check('seek past a finished MIDI clip does not replay it', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [
+    { note: 'A3', start: 0, dur: 480, velocity: 100 },
+  ]});
+  d.play();
+  for (let i = 0; i < 30; i++) d.advanceAndTick(100); // 3.0s: note (2.0-2.5s) done
+  const before = d.spy.filter(s => s.note === 'A3' && s.type === 'on').length;
+  if (before !== 1) return false;
+  // Simulate the adapter seek sequence to 10s: rebase clock, reset flags,
+  // retire finished events, then tick — the finished note must not replay.
+  d.set(3000);
+  d.engine._startMs = 3000 - 10000;
+  d.engine.tracks.forEach(t => (t.clips || []).forEach(c => (c.events || []).forEach(ev => delete ev._scheduledLin)));
+  d.engine._markPastLinear(9600);
+  for (let i = 0; i < 5; i++) d.advanceAndTick(100);
+  return d.spy.filter(s => s.note === 'A3' && s.type === 'on').length === 1;
+});
+check('setClipAudioCommand applies and undoes', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const clip = d.engine.addClip('trk_a', { start: 1920, length: 1920 });
+  const cmd = setClipAudioCommand(d.engine, 'trk_a', clip.id, { hash: 'hx' });
+  cmd.apply();
+  if (d.engine.byId.trk_a.clips.find(c => c.id === clip.id).audio.hash !== 'hx') return false;
+  cmd.undo();
+  return d.engine.byId.trk_a.clips.find(c => c.id === clip.id).audio === null;
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;

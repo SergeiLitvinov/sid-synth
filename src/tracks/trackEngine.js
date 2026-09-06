@@ -4,6 +4,7 @@ import {
   gridToClipEvents, rtToClipEvents, mergeClipEvents,
   clipEventsToGrid, clipEventsToRt, stepTicks, ticksPerSecond,
 } from '../project/clipEvents.js';
+import { normalizeAudioRef, createAudioEngine } from '../audio/audioEngine.js';
 
 export const STEPS_PER_LOOP = 16;
 export const NOTE_BEATS = 4;
@@ -16,6 +17,10 @@ function defaultClip(cfg = {}) {
     start: cfg.start === undefined ? 0 : cfg.start,
     length: cfg.length === undefined ? 1920 : cfg.length,
     events: Array.isArray(cfg.events) ? cfg.events.slice() : [],
+    // Audio reference (M4): { hash, offset, gain, fadeIn, fadeOut } or null.
+    // A clip with audio plays the asset at clip.start; MIDI events and audio
+    // coexist on one clip (layered), the piano roll only edits the events.
+    audio: normalizeAudioRef(cfg.audio),
   };
 }
 
@@ -82,6 +87,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
     _recBuffer: new Map(), // trackId -> open events [{note,start,dur:null}]
     recordMode: config.recordMode || 'overdub', // 'overdub' | 'replace'
     recordQuantize: config.recordQuantize || null, // { grid, strength, swing } | null
+    // Clip audio playback (M4): injectable for tests, real engine otherwise.
+    // Routes through each track's voice chain (inserts + fader), so mute/solo
+    // and insert devices apply to audio exactly like they do to MIDI voices.
+    audio: config.audioEngine || createAudioEngine({ ctx, store: config.audioStore || null }),
   };
 
   engine.stepDur = 60 / engine.bpm / NOTE_BEATS;
@@ -296,6 +305,18 @@ export function createTrackEngine(ctx, dest, config = {}) {
     return true;
   };
 
+  // Attach/detach an audio reference on a clip (M4). Null clears it; the
+  // piano-roll event editing never touches it.
+  engine.setClipAudio = (id, clipId, audio) => {
+    const t = engine.byId[id];
+    const clip = t && (t.clips || []).find(c => c.id === clipId);
+    if (!clip) return false;
+    clip.audio = normalizeAudioRef(audio);
+    delete clip._scheduledAudio;
+    _emitState();
+    return true;
+  };
+
   // Split a clip at an absolute timeline tick `atTicks` (must be strictly inside
   // the clip). The clip becomes two clips: the original keeps [start, atTicks),
   // a new clip covers [atTicks, start+length). Events are partitioned by their
@@ -476,8 +497,40 @@ export function createTrackEngine(ctx, dest, config = {}) {
   // scheduled twice within one playback session; reset on every start.
   engine._resetLinearPlayback = () => {
     engine.tracks.forEach(t => {
-      (t.clips || []).forEach(c => (c.events || []).forEach(ev => delete ev._scheduledLin));
+      (t.clips || []).forEach(c => {
+        (c.events || []).forEach(ev => delete ev._scheduledLin);
+        delete c._scheduledAudio;
+      });
     });
+  };
+
+  // Mark finished linear events as scheduled up to an absolute tick (seek).
+  // After a seek the adapter clears all flags and chases; without this, the
+  // scheduler would replay every finished clip from the top (late-pass
+  // catch-up cannot tell a seek from timer jitter). Sustained notes stay
+  // unflagged — retriggering them is the chase path's job; open notes keep
+  // legacy behavior. Audio clips need no marking here: the audio chase
+  // claims every started clip itself.
+  engine._markPastLinear = (absTick) => {
+    engine.tracks.forEach(t => {
+      const loopClip = (t.clips || []).find(c => c.start === 0);
+      (t.clips || []).forEach(clip => {
+        if (clip === loopClip) return;
+        (clip.events || []).forEach(ev => {
+          const evStart = typeof ev.start === 'number' ? ev.start : 0;
+          const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+          if (evDur > 0 && clip.start + evStart + evDur <= absTick) ev._scheduledLin = true;
+        });
+      });
+    });
+  };
+
+  // Silence every clip-audio voice (stop, seek, dispose paths). The unified
+  // transport adapter calls this alongside voice.allOff.
+  engine._stopAudio = () => {
+    try {
+      if (engine.audio && typeof engine.audio.stopAll === 'function') engine.audio.stopAll();
+    } catch (e) {}
   };
 
   // Chase: fire noteOn for all sustained notes at the given absolute tick.
@@ -517,6 +570,29 @@ export function createTrackEngine(ctx, dest, config = {}) {
             const durSec = remainingTicks / tps;
             t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
           }
+        });
+      });
+      // Audio clips (M4): restart every started-but-unfinished clip. The flag
+      // is claimed even when the buffer is not cached yet, so the scheduler
+      // never replays it from the top; playClip trims late decodes to the
+      // remainder by itself.
+      (t.clips || []).forEach(clip => {
+        const ref = clip.audio;
+        if (!ref || typeof ref.hash !== 'string' || !ref.hash) return;
+        const absSec = clip.start / tps;
+        const posSec = absTick / tps;
+        if (posSec < absSec) return;
+        clip._scheduledAudio = true;
+        if (!engine.audio || typeof engine.audio.playClip !== 'function') return;
+        engine.audio.playClip({
+          hash: ref.hash,
+          when: engine._playStartCtx + absSec,
+          offset: Math.max(0, ref.offset || 0),
+          duration: clip.length / tps,
+          gain: ref.gain === undefined ? 1 : ref.gain,
+          fadeIn: 0,
+          fadeOut: ref.fadeOut || 0,
+          destination: t.voice.insertIn,
         });
       });
     });
@@ -563,6 +639,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._loopPos = 0;
     engine._loopCount = 0;
     engine.tracks.forEach(t => t.voice.allOff(engine.ctx.currentTime));
+    engine._stopAudio();
     _emitState();
   };
 
@@ -845,6 +922,39 @@ export function createTrackEngine(ctx, dest, config = {}) {
           if (durTicks > 0) scheduleNoteOn(t, ev.note, timeAbs, durTicks / tps, ev.velocity);
           else scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
           ev._scheduledLin = true;
+        });
+      });
+    });
+
+    // --- audio clips (M4): sample-accurate one-shots at clip.start --------
+    // A clip with an audio reference plays its asset once per pass, bounded
+    // by the clip length. The flag is claimed synchronously so the clip can
+    // never double-fire; async decode catch-up inside playClip trims late
+    // arrivals to the remainder instead of replaying the past.
+    engine.tracks.forEach(t => {
+      (t.clips || []).forEach(clip => {
+        const ref = clip.audio;
+        if (!ref || typeof ref.hash !== 'string' || !ref.hash) return;
+        if (clip._scheduledAudio) return;
+        const absSec = clip.start / tps;
+        const clipLenSec = clip.length / tps;
+        if (absSec > elapsed + 0.12) return;
+        if (absSec + clipLenSec < elapsed) {
+          clip._scheduledAudio = true;
+          return;
+        }
+        clip._scheduledAudio = true;
+        if (engine.byId[t.id].enabled === false) return;
+        if (!engine.audio || typeof engine.audio.playClip !== 'function') return;
+        engine.audio.playClip({
+          hash: ref.hash,
+          when: engine._playStartCtx + absSec,
+          offset: Math.max(0, ref.offset || 0),
+          duration: clipLenSec,
+          gain: ref.gain === undefined ? 1 : ref.gain,
+          fadeIn: ref.fadeIn || 0,
+          fadeOut: ref.fadeOut || 0,
+          destination: t.voice.insertIn,
         });
       });
     });
