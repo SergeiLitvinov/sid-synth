@@ -1,4 +1,5 @@
 import { normalizeMarker } from './markers.js';
+import { normalizeAsset } from '../audio/assetStore.js';
 
 export const SCHEMA_VERSION = 1;
 export const STEPS_PER_LOOP = 16;
@@ -79,6 +80,9 @@ export function defaultProject(cfg = {}) {
     },
     tracks: Array.isArray(cfg.tracks) ? cfg.tracks.map(t => ({ ...t })) : [],
     markers: Array.isArray(cfg.markers) ? cfg.markers.map(normalizeMarker) : [],
+    // Media-pool manifest (M4): metadata only — binary audio lives in the
+    // IndexedDB asset store keyed by hash, never inside the project JSON.
+    assets: Array.isArray(cfg.assets) ? cfg.assets.map(normalizeAsset) : [],
     activeTrackId: cfg.activeTrackId ?? null,
   };
 }

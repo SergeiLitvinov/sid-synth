@@ -181,7 +181,7 @@
 
 ### Assets и импорт
 
-- [ ] Asset store в IndexedDB или OPFS: binary audio отдельно от project JSON, hash/dedup и reference counting.
+- [x] Asset store в IndexedDB или OPFS: binary audio отдельно от project JSON, hash/dedup и reference counting (реализовано: `src/audio/assetStore.js` — `hashBuffer` (SHA-256 hex через crypto.subtle), `normalizeAsset` (метаданные без Blob), `collectReferencedHashes` (манифест + clip audio refs), `createAssetStore` (IndexedDB, keyPath hash; open/put/get/getBlob/has/list без блобов/remove/gc по used-набору/clear/close); `src/audio/peaks.js` — чистые `computePeaks`/`computePeaksStereo`/`downsamplePeaks` (max-abs per bucket, LOD); `src/audio/audioImport.js` — `sniffAudioMime`/`isSupportedAudioFile` (wav/aiff/mp3/ogg/flac/m4a/opus), `importAudioFile` (read → hash → dedup без re-decode → decode для метаданных → store; Blob — байт-идентичный исходник); схема: `assets`-манифест в `defaultProject`/`serializeProject`/`parseProject`/`validateProject`, round-trip в `main.js` (`projectAssets` в capture/apply). Тесты: новый `assetStore-test` 25/25 (SHA-256 векторы, пики, sniff, normalize/collect, IDB CRUD+gc, import+dedup+reject), `project-test` 38→41. Все наборы зелёные (575/575).
 - [ ] Import через file picker и drag-and-drop; decode WAV/AIFF/MP3/OGG/FLAC по фактической поддержке браузера.
 - [ ] Resample к sample rate проекта при необходимости; сохранять исходный файл и metadata.
 - [ ] Worker-generated waveform peaks с несколькими уровнями детализации и кэшем.

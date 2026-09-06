@@ -382,6 +382,21 @@ check('parseProject defaults midiChannel to null when missing', () => {
   const p = parseProject(raw);
   return p.tracks[0].midiChannel === null;
 });
+check('defaultProject carries an empty assets manifest', () => {
+  return Array.isArray(defaultProject().assets) && defaultProject().assets.length === 0;
+});
+check('serializeProject round-trips the assets manifest without blobs', () => {
+  const st = fixtureState();
+  st.assets = [{ hash: 'h1', name: 'kick.wav', mime: 'audio/wav', size: 44, sampleRate: 8000, channels: 1, duration: 0.1, blob: { fake: true } }];
+  const p = serializeProject(st);
+  return p.assets.length === 1 && p.assets[0].hash === 'h1' && !('blob' in p.assets[0]);
+});
+check('parseProject normalizes missing and partial assets', () => {
+  const missing = parseProject({ schemaVersion: 1, name: 'x', tempo: 120, rack: { components: [], connections: [] }, tracks: [] });
+  const partial = parseProject({ schemaVersion: 1, name: 'x', tempo: 120, rack: { components: [], connections: [] }, tracks: [], assets: [{ hash: 'h2' }] });
+  return Array.isArray(missing.assets) && missing.assets.length === 0
+    && partial.assets.length === 1 && partial.assets[0].hash === 'h2' && partial.assets[0].name === 'audio';
+});
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {

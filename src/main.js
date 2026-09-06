@@ -27,6 +27,7 @@ import { createProjectStore } from './project/projectStore.js';
 import { serializeProject } from './project/serialize.js';
 import { createProjectId } from './project/defaultProject.js';
 import { createMarkerStore } from './project/markers.js';
+import { normalizeAsset } from './audio/assetStore.js';
 
 console.log('SID Synth Modular loaded');
 
@@ -475,6 +476,10 @@ console.log('SID Synth Modular loaded');
   // Unified project persistence: one versioned snapshot (rack + tracks + tempo).
   let projectId = null;
   let projectName = 'SID Project';
+  // Media-pool manifest (M4): metadata only — binary audio lives in the
+  // IndexedDB asset store. Mutated by the import UI (next item), persisted
+  // here so save/load round-trips keep every referenced hash.
+  let projectAssets = [];
 
   function captureProject() {
     if (!projectId) projectId = createProjectId();
@@ -492,12 +497,14 @@ console.log('SID Synth Modular loaded');
       loopStartTicks: transport.loopStartTicks,
       loopEndTicks: transport.loopEndTicks,
       projectEndTicks: transport.projectEndTicks,
+      assets: projectAssets,
     });
   }
 
   function applyProject(project) {
     if (project.id) projectId = project.id;
     if (project.name) projectName = project.name;
+    projectAssets = Array.isArray(project.assets) ? project.assets.map(normalizeAsset) : [];
 
     // Rack: rebuild components + connections from the snapshot.
     clearRack();

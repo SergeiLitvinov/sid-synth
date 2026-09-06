@@ -1,5 +1,6 @@
 import { SCHEMA_VERSION, defaultProject, defaultTrackData, defaultClip } from './defaultProject.js';
 import { normalizeMarker } from './markers.js';
+import { normalizeAsset } from '../audio/assetStore.js';
 
 // --- validation -----------------------------------------------------------
 // Throws with a descriptive message on any structural problem. Kept strict
@@ -15,6 +16,7 @@ export function validateProject(p) {
   if (!Array.isArray(p.rack.connections)) throw new Error('rack.connections must be an array');
   if (!Array.isArray(p.tracks)) throw new Error('tracks must be an array');
   if (p.markers !== undefined && !Array.isArray(p.markers)) throw new Error('markers must be an array');
+  if (p.assets !== undefined && !Array.isArray(p.assets)) throw new Error('assets must be an array');
   return true;
 }
 
@@ -38,7 +40,7 @@ export function validateTrack(t) {
 // Build a versioned project document from live app state. `components` is a map
 // id -> {type, element, ...params} and captureParams(comp) extracts params.
 // `tracks` is the plain-data array from trackEngine.getTracks().
-export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks }) {
+export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks, assets }) {
   const rackComponents = Object.keys(components || {}).map(cid => {
     const comp = components[cid];
     return {
@@ -62,6 +64,7 @@ export function serializeProject({ components, connections, captureParams, track
     rackConnections,
     tracks: (tracks || []).map(normalizeTrackData),
     markers: (markers || []).map(normalizeMarker),
+    assets: (assets || []).map(normalizeAsset),
     loopEnabled,
     loopStartTicks,
     loopEndTicks,
@@ -104,6 +107,7 @@ export function parseProject(data) {
   } : { components: [], connections: [] };
   project.tracks = Array.isArray(project.tracks) ? project.tracks.map(normalizeTrackData) : [];
   project.markers = Array.isArray(project.markers) ? project.markers.map(normalizeMarker) : [];
+  project.assets = Array.isArray(project.assets) ? project.assets.map(normalizeAsset) : [];
   project.activeTrackId = project.activeTrackId ?? (project.tracks[0] && project.tracks[0].id) ?? null;
   return project;
 }

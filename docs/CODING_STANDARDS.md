@@ -60,15 +60,16 @@
 - Сервер: `.\serve.ps1` (порт 3000, через `serve.py`) или `pwsh -File tests/serve-ps.ps1` (порт 3100, только PS7) — оба без кэша.
 - Браузерные тесты: `.\serve.ps1` → `http://localhost:3000/tests/smoke.html` (10/10),
   `http://localhost:3000/tests/mock-test.html` (11/11),
-  `http://localhost:3000/tests/track-test.html` (112/112),  `http://localhost:3000/tests/project-test.html` (38/38),
+  `http://localhost:3000/tests/track-test.html` (112/112),  `http://localhost:3000/tests/project-test.html` (41/41),
   `http://localhost:3000/tests/history-test.html` (28/28),
   `http://localhost:3000/tests/recorderUI-test.html` (27/27),
   `http://localhost:3000/tests/musicalTime-test.html` (26/26),
   `http://localhost:3000/tests/transport-test.html` (48/48),
   `http://localhost:3000/tests/projectStore-test.html` (11/11, async debounce-тест требует Playwright/ожидания),
   `http://localhost:3000/tests/clipEvents-test.html` (21/21),
+  `http://localhost:3000/tests/assetStore-test.html` (25/25),
   `http://localhost:3000/tests/wavExport-test.html` (8/8) и
-  `http://localhost:3000/tests/arranger-test.html` (207/207) — без FAIL (итого 509/509).
+  `http://localhost:3000/tests/arranger-test.html` (207/207) — без FAIL (итого 575/575).
 - E2E: `tests/integration.js` (225 шагов, 7 новых в r30 — drum editor; проверка в браузере потребуется при восстановлении Playwright MCP) гоняется браузерным харнессом (Playwright MCP)
   против живого приложения (порт 3000 или 3100) — без FAIL.
 - Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу

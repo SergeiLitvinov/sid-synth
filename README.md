@@ -159,7 +159,7 @@ sid-synth/
 │   ├── smoke.html/js       #   smoke на реальном AudioContext (10/10)
 │   ├── mock-test.html/js   #   unit-эквивалент на mockAudioContext (11/11)
 │   ├── track-test.html/js  #   трек-движок/рекордер + folder/collapse + full-song clips + setClipEvents + inserts/device chain + audition when + record mode/quantize + chaseToTick + midiChannel routing + pitch bend/mod/sustain (112/112)
-│   ├── project-test.html/js#   versioned project serialize/migrate round-trip + markers + mute/solo + folders + inserts + midiChannel (38/38)
+│   ├── project-test.html/js#   versioned project serialize/migrate round-trip + markers + mute/solo + folders + inserts + midiChannel + assets manifest (41/41)
 │   ├── history-test.html/js #   undo/redo + track commands (28/28)
 │   ├── recorderUI-test.html/js # recorder panel wiring through history + INS insert editor (27/27)
 │   ├── musicalTime-test.html/js # PPQ / tempo map / time signature (26/26)
@@ -167,6 +167,7 @@ sid-synth/
 │   ├── projectStore-test.html/js # unified project snapshot + legacy migration (11/11)
 │   ├── arranger-test.html/js #   arranger layout + clips + mini-notes + trim/split/dup/loop + multi-select + markers + mute/solo + rename + reorder + color + monitor + resize + folder/collapse + piano roll UI + quantize + transpose + duplicate + legato + fixed length + humanize + preview + step input (207/207)
 │   ├── clipEvents-test.html/js # grid/rt ↔ clip events conversions (21/21)
+│   ├── assetStore-test.html/js # IndexedDB audio assets (hash/dedup/gc) + peaks + import pipeline (25/25)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)
@@ -190,6 +191,10 @@ sid-synth/
 │   │   ├── clipEvents.js    #   grid/rt ↔ clip events conversions (PPQ ticks)
 │   │   ├── tempoMap.js      #   tempo + time-signature events, ticks ↔ seconds
 │   │   └── transport.js     #   unified PPQ transport: clock, lookahead, play/record
+│   ├── audio/               # Binary audio assets (M4): IndexedDB store + import + peaks
+│   │   ├── assetStore.js    #   hash/dedup/gc asset store, manifest normalize
+│   │   ├── audioImport.js   #   file sniff/decode/import pipeline
+│   │   └── peaks.js         #   waveform peak computation + LOD downsample
 │   ├── arranger/            # Linear timeline (DAW arranger canvas)
 │   │   ├── arrangerLayout.js #   pure geometry: ticks↔px, ruler, pattern/clip layout, snap
 │   │   └── arranger.js      #   createArranger UI: ruler, lanes, playhead, zoom, clips
