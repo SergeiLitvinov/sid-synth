@@ -50,7 +50,8 @@
 // backlog M4: media pool (asset import UI).
 // backlog M4: audio clip UI (pool +CLIP, arranger waveform, piano roll editor).
 // backlog M4: audio input panel (device picker, monitor, meter).
-// 243 steps total.
+// backlog M4: take recording (worklet capture, REC button).
+// 246 steps total.
 async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -2184,6 +2185,21 @@ async (page) => {
   });
   r.steps = r.steps.concat(r33.steps);
   r.steps.push({ name: 'r33: audio input section ran', ok: true });
+
+  // 34. Take REC button (M4 recording): presence only — live capture needs a
+  // microphone and is covered by audioInput-test (fake device).
+  const r34 = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const rec = document.querySelector('#audioInput #inpRec');
+    step('take REC button exists', !!rec);
+    step('REC button starts idle', !!rec && !rec.classList.contains('on'));
+    return results;
+  });
+  r.steps = r.steps.concat(r34.steps);
+  r.steps.push({ name: 'r34: take REC section ran', ok: true });
 
   return r;
 }

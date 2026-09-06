@@ -634,11 +634,23 @@ console.log('SID Synth Modular loaded');
       })
     : null;
 
-  // Audio input (M4 recording): device picker + monitor + meter. Device
-  // selection is session-local and never persisted.
+  // Audio input (M4 recording): device picker + monitor + meter + take REC.
+  // Device selection is session-local and never persisted.
   const audioInputEl = document.getElementById('audioInput');
   const audioInput = audioInputEl
-    ? createInputUI({ container: audioInputEl, ctx, destination: masterGain })
+    ? createInputUI({
+        container: audioInputEl,
+        ctx,
+        destination: masterGain,
+        take: {
+          engine: trackEngine,
+          history,
+          transport,
+          store: assetStore,
+          getAssets: () => projectAssets,
+          setAssets: (arr) => { projectAssets = arr; projectStore.markDirty(); },
+        },
+      })
     : null;
 
   router.drawConnections();

@@ -1,7 +1,9 @@
 import {
   listInputDevices, requestInputStream, stopStream, createInputMonitor,
+  createTakeRecorder, finalizeTake, ensureCaptureWorklet, createAssetStore,
 } from '../src/audio/index.js';
 import { createInputUI } from '../src/audio/index.js';
+import { createHistory } from '../src/project/history.js';
 
 const container = document.getElementById('container');
 const results = document.getElementById('results');
@@ -134,9 +136,107 @@ check('input UI meter draws without an active stream', () => {
   container.appendChild(el);
   const ui = createInputUI({ container: el, ctx: new AudioContext(), destination: null });
   ui.updateMeter();
-  const ok = ui.getDeviceId() === '' && !ui.isMonitoring();
+  const ok = ui.getDeviceId() === '' && !ui.isMonitoring() && !el.querySelector('#inpRec');
   ui.dispose();
   el.remove();
+  return ok;
+});
+check('take recorder idles null and loads the worklet twice cleanly', async () => {
+  const ctx = new AudioContext();
+  try {
+    await ensureCaptureWorklet(ctx);
+    await ensureCaptureWorklet(ctx);
+    const rec = createTakeRecorder({ ctx });
+    const idle = rec.stop() === null && !rec.isRecording();
+    let threw = false;
+    try { await rec.start(null); } catch (e) { threw = true; }
+    try { await ctx.close(); } catch (e) {}
+    return idle && threw;
+  } catch (e) {
+    try { await ctx.close(); } catch (err) {}
+    throw e;
+  }
+});
+check('finalizeTake rejects empty takes', async () => {
+  const store = createAssetStore({ dbName: 'sid-synth-assets-take-test' });
+  await store.open();
+  let threw = false;
+  try {
+    await finalizeTake({ audioBuffer: null, duration: 0 }, { store });
+  } catch (e) {
+    threw = /empty take/.test(e.message);
+  }
+  store.close();
+  return threw;
+});
+check('REC captures a take into an asset and a track clip', async () => {
+  const el = document.createElement('div');
+  container.appendChild(el);
+  const ctx = new AudioContext();
+  const store = createAssetStore({ dbName: 'sid-synth-assets-take-test' });
+  await store.open();
+  await store.clear();
+  let manifest = [];
+  const placed = [];
+  const engine = {
+    activeTrackId: 'trk_a', bpm: 120, ppq: 480,
+    getTracks: () => [{ id: 'trk_a', clips: [] }],
+    addClip: (id, cfg) => { placed.push({ id, cfg }); return { id: 'clip_take', ...cfg }; },
+  };
+  const ui = createInputUI({
+    container: el, ctx, destination: ctx.destination,
+    take: {
+      engine, history: createHistory(), transport: { getState: () => ({ loopPosTicks: 960 }) },
+      store, getAssets: () => manifest, setAssets: (a) => { manifest = a; },
+    },
+  });
+  const recBtn = el.querySelector('#inpRec');
+  if (!recBtn) {
+    ui.dispose();
+    el.remove();
+    try { await ctx.close(); } catch (e) {}
+    store.close();
+    return false;
+  }
+  const devs = await ui.refreshDevices();
+  if (!devs.length) {
+    ui.dispose();
+    el.remove();
+    try { await ctx.close(); } catch (e) {}
+    store.close();
+    return false;
+  }
+  if (!(await ui.selectDevice(devs[0].deviceId))) {
+    ui.dispose();
+    el.remove();
+    try { await ctx.close(); } catch (e) {}
+    store.close();
+    return false;
+  }
+  recBtn.click();
+  let waited = 0;
+  while (!ui.isRecording() && waited < 3000) {
+    await new Promise(res => setTimeout(res, 100));
+    waited += 100;
+  }
+  const wasRecording = ui.isRecording();
+  await new Promise(res => setTimeout(res, 500));
+  recBtn.click();
+  await new Promise(res => setTimeout(res, 1200));
+  const clip = placed.length ? placed[0].cfg : null;
+  const ok = wasRecording && manifest.length === 1 && !!clip
+    && clip.start === 960 && clip.audio && typeof clip.audio.hash === 'string'
+    && clip.length > 480 && /take .*s/.test(ui.getStatus());
+  ui.dispose();
+  el.remove();
+  try { await ctx.close(); } catch (e) {}
+  store.close();
+  await new Promise(resolve => {
+    const req = indexedDB.deleteDatabase('sid-synth-assets-take-test');
+    req.onsuccess = () => resolve();
+    req.onerror = () => resolve();
+    req.onblocked = () => resolve();
+  });
   return ok;
 });
 

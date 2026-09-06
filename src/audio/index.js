@@ -6,5 +6,6 @@ export { projectSampleRate, decodeAtSampleRate, resampleBuffer } from './resampl
 export { computePeaksAsync } from './peaksClient.js';
 export { normalizeAudioRef, createAudioEngine } from './audioEngine.js';
 export { drawWaveform } from './waveform.js';
+export { ensureCaptureWorklet, createTakeRecorder, finalizeTake } from './capture.js';
 export { listInputDevices, requestInputStream, stopStream, createInputMonitor } from './audioInput.js';
 export { createInputUI } from './inputUI.js';
