@@ -28,6 +28,8 @@ import { serializeProject } from './project/serialize.js';
 import { createProjectId } from './project/defaultProject.js';
 import { createMarkerStore } from './project/markers.js';
 import { normalizeAsset } from './audio/assetStore.js';
+import { createAssetStore } from './audio/assetStore.js';
+import { createMediaPool } from './audio/mediaPool.js';
 
 console.log('SID Synth Modular loaded');
 
@@ -477,7 +479,7 @@ console.log('SID Synth Modular loaded');
   let projectId = null;
   let projectName = 'SID Project';
   // Media-pool manifest (M4): metadata only — binary audio lives in the
-  // IndexedDB asset store. Mutated by the import UI (next item), persisted
+  // IndexedDB asset store. Mutated by the media pool import UI, persisted
   // here so save/load round-trips keep every referenced hash.
   let projectAssets = [];
 
@@ -568,6 +570,22 @@ console.log('SID Synth Modular loaded');
   projectStore.restore();
   if (recorderUI) recorderUI.renderAll();
   if (arranger) arranger.render();
+
+  // Media pool (M4): IndexedDB asset store + import UI. Created after restore
+  // so the first refresh already sees the restored assets manifest.
+  const assetStore = createAssetStore();
+  const mediaPoolEl = document.getElementById('mediaPool');
+  const mediaPool = mediaPoolEl
+    ? createMediaPool({
+        container: mediaPoolEl,
+        ctx,
+        destination: masterGain,
+        store: assetStore,
+        getAssets: () => projectAssets,
+        setAssets: (arr) => { projectAssets = arr; projectStore.markDirty(); },
+      })
+    : null;
+
   router.drawConnections();
   setInterval(() => projectStore.markDirty(), 3000);
 })();

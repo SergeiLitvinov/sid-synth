@@ -51,9 +51,11 @@ export function decodeAudioBuffer(arrayBuffer, ctx) {
   }
 }
 
-// Full import pipeline. Returns { hash, asset, deduplicated }: `asset` is
-// the metadata record for the project manifest, `deduplicated` is true when
-// identical bytes were already stored (no second Blob, no re-decode).
+// Full import pipeline. Returns { hash, asset, deduplicated, audioBuffer }:
+// `asset` is the metadata record for the project manifest, `deduplicated`
+// is true when identical bytes were already stored (no second Blob, no
+// re-decode — then audioBuffer is undefined), `audioBuffer` is the decoded
+// audio for peak metering and preview without decoding twice.
 export async function importAudioFile(file, { ctx, store } = {}) {
   if (!file) throw new Error('importAudio: no file');
   if (!store) throw new Error('importAudio: no asset store');
@@ -61,7 +63,7 @@ export async function importAudioFile(file, { ctx, store } = {}) {
   const hash = await hashBuffer(buf);
   if (await store.has(hash)) {
     const existing = await store.get(hash);
-    return { hash, asset: normalizeAsset(existing), deduplicated: true };
+    return { hash, asset: normalizeAsset(existing), deduplicated: true, audioBuffer: undefined };
   }
   if (!ctx) throw new Error('importAudio: no audio context for decode');
   let decoded;
@@ -83,5 +85,5 @@ export async function importAudioFile(file, { ctx, store } = {}) {
     blob: new Blob([buf], { type: mime }),
   };
   await store.put(record);
-  return { hash, asset: normalizeAsset(record), deduplicated: false };
+  return { hash, asset: normalizeAsset(record), deduplicated: false, audioBuffer: decoded };
 }

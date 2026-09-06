@@ -47,7 +47,8 @@
 // backlog #173: MIDI input routing.
 // backlog #174: pitch bend / modulation / sustain / CC.
 // backlog #175: drum/step editor mode.
-// 225 steps total.
+// backlog M4: media pool (asset import UI).
+// 230 steps total.
 async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -2039,6 +2040,23 @@ async (page) => {
   });
   r.steps = r.steps.concat(r30.steps);
   r.steps.push({ name: 'r30: drum editor section ran', ok: true });
+
+  // 31. Media pool (M4 import UI): panel, IMPORT button, drop hint and list
+  // render. File I/O itself is covered by mediaPool-test; here only DOM.
+  const r31 = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    const pool = document.getElementById('mediaPool');
+    step('media pool panel exists', !!pool);
+    step('IMPORT button exists', !!(pool && pool.querySelector('#mpImport')));
+    step('drop hint or list renders', !!(pool && (pool.querySelector('.mp-empty') || pool.querySelector('.mp-list'))));
+    step('file input accepts audio', !!(pool && [...pool.querySelectorAll('input[type=file]')].some(i => (i.accept || '').includes('audio'))));
+    return results;
+  });
+  r.steps = r.steps.concat(r31.steps);
+  r.steps.push({ name: 'r31: media pool section ran', ok: true });
 
   return r;
 }
