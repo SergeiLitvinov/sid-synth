@@ -71,9 +71,9 @@
   `http://localhost:3000/tests/mediaPool-test.html` (16/16),
   `http://localhost:3000/tests/resample-test.html` (9/9),
   `http://localhost:3000/tests/audioEngine-test.html` (11/11),
-  `http://localhost:3000/tests/audioInput-test.html` (14/14, только с флагами `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`),
+  `http://localhost:3000/tests/audioInput-test.html` (18/18, только с флагами `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`),
   `http://localhost:3000/tests/wavExport-test.html` (8/8) и
-  `http://localhost:3000/tests/arranger-test.html` (217/217) — без FAIL (итого 663/663).
+  `http://localhost:3000/tests/arranger-test.html` (217/217) — без FAIL (итого 667/667).
 - E2E: `tests/integration.js` (239 шагов: r30 — drum editor, r31 — media pool DOM, r32 — audio clip UI; полный прогон требует Node/MCP-браузер, ключевые flow r32 проверены headless через Python Playwright) гоняется браузерным харнессом (Playwright MCP)
   против живого приложения (порт 3000 или 3100) — без FAIL.
 - Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу

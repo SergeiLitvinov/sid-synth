@@ -8,4 +8,4 @@ export { normalizeAudioRef, createAudioEngine } from './audioEngine.js';
 export { drawWaveform } from './waveform.js';
 export { ensureCaptureWorklet, createTakeRecorder, finalizeTake } from './capture.js';
 export { listInputDevices, requestInputStream, stopStream, createInputMonitor } from './audioInput.js';
-export { createInputUI } from './inputUI.js';
+export { createInputUI, measureOutputLatency, INPUT_LATENCY_KEY } from './inputUI.js';

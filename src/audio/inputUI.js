@@ -3,6 +3,20 @@ import { createTakeRecorder, finalizeTake } from './capture.js';
 import { addClipCommand } from '../project/trackCommands.js';
 import { ticksPerSecond } from '../project/clipEvents.js';
 
+// Manual latency trim persistence (device-specific value, intentionally
+// outside the project JSON — it describes the hardware, not the song).
+export const INPUT_LATENCY_KEY = 'sidSynthInputLatencyMs';
+
+// Measured output pipeline latency, seconds. First-order estimate for take
+// placement; true loopback calibration needs a physical loop, so the manual
+// trim below covers the remainder.
+export function measureOutputLatency(ctx) {
+  if (!ctx) return 0;
+  const out = typeof ctx.outputLatency === 'number' ? ctx.outputLatency : 0;
+  const base = typeof ctx.baseLatency === 'number' ? ctx.baseLatency : 0;
+  return Math.max(0, out + base);
+}
+
 // Input panel UI (M4 recording): device picker, monitor arm toggle, live
 // level meter, and — when take deps are provided — a take REC button that
 // captures the input into an asset and drops an audio clip on the active
@@ -62,12 +76,67 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     recBtn.title = 'Record a take into an audio clip on the active track';
     toolbar.append(recBtn);
   }
-  el.append(title, toolbar, status);
+  // Latency calibration row: measured system latency (read-only) plus a
+  // manual trim in ms, persisted across sessions. Takes are placed earlier
+  // by system + trim so captured audio lands in sync.
+  const latRow = document.createElement('div');
+  latRow.className = 'inp-latrow';
+  const latName = document.createElement('span');
+  latName.className = 'inp-lat-name';
+  latName.textContent = 'latency';
+  const latSys = document.createElement('span');
+  latSys.className = 'inp-lat-sys';
+  const latTrim = document.createElement('input');
+  latTrim.type = 'number';
+  latTrim.className = 'inp-lat-trim';
+  latTrim.id = 'inpLatTrim';
+  latTrim.min = '-500';
+  latTrim.max = '500';
+  latTrim.step = '0.5';
+  latTrim.title = 'Manual latency trim in ms (added to the measured system value)';
+  latRow.append(latName, latSys, latTrim);
+  el.append(title, toolbar, latRow, status);
 
   function setStatus(text) {
     statusText = text;
     status.textContent = text;
   }
+
+  function readTrimMs() {
+    let saved = 0;
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(INPUT_LATENCY_KEY) : null;
+      if (raw !== null) saved = parseFloat(raw);
+    } catch (e) {}
+    return Number.isFinite(saved) ? Math.max(-500, Math.min(500, saved)) : 0;
+  }
+
+  function getLatencySec() {
+    const trim = parseFloat(latTrim.value);
+    const trimMs = Number.isFinite(trim) ? trim : 0;
+    return Math.max(0, measureOutputLatency(ctx) + trimMs / 1000);
+  }
+
+  latTrim.value = String(readTrimMs());
+  function refreshSysLabel() {
+    // outputLatency estimates settle asynchronously after context start —
+    // re-read late (device select, take finalize) rather than caching.
+    latSys.textContent = (measureOutputLatency(ctx) * 1000).toFixed(1) + 'ms sys';
+  }
+  refreshSysLabel();
+  latSys.title = 'Measured output pipeline latency (baseLatency + outputLatency)';
+  latTrim.addEventListener('change', () => {
+    const v = parseFloat(latTrim.value);
+    if (!Number.isFinite(v)) {
+      latTrim.value = String(readTrimMs());
+      return;
+    }
+    const clamped = Math.max(-500, Math.min(500, v));
+    latTrim.value = String(clamped);
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(INPUT_LATENCY_KEY, String(clamped));
+    } catch (e) {}
+  });
 
   function stopLoop() {
     if (rafId) {
@@ -169,6 +238,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     select.value = deviceId;
     loopMeter();
     updateMeter();
+    refreshSysLabel();
     setStatus('input ready');
     return true;
   }
@@ -269,9 +339,12 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     const targetId = resolveTargetTrack();
     if (targetId && engine) {
       const tps = ticksPerSecond(engine.bpm || 120, engine.ppq || 480);
+      // Placement compensation: captured audio lags the transport by the
+      // effective latency, so the clip starts earlier by that amount.
+      const compTicks = Math.round(getLatencySec() * tps);
       const clip = {
         name: res.asset.name || 'Take',
-        start: takeStartTicks,
+        start: Math.max(0, takeStartTicks - compTicks),
         length: Math.max(480, Math.round(take.duration * tps)),
         events: [],
         audio: { hash: res.hash },
@@ -283,6 +356,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
       }
     }
     setStatus('take ' + take.duration.toFixed(1) + 's → ' + res.asset.name);
+    refreshSysLabel();
     return res;
   }
 
@@ -311,5 +385,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     getDeviceId: () => deviceId,
     isMonitoring: () => !!(monitor && monitor.isMonitoring()),
     isRecording: () => !!(recorder && recorder.isRecording()),
+    getTakeDuration: () => (recorder ? recorder.getDuration() : 0),
+    getLatencySec,
   };
 }
