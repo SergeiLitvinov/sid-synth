@@ -167,8 +167,8 @@ sid-synth/
 │   ├── projectStore-test.html/js # unified project snapshot + legacy migration (11/11)
 │   ├── arranger-test.html/js #   arranger layout + clips + mini-notes + trim/split/dup/loop + multi-select + markers + mute/solo + rename + reorder + color + monitor + resize + folder/collapse + piano roll UI + quantize + transpose + duplicate + legato + fixed length + humanize + preview + step input (207/207)
 │   ├── clipEvents-test.html/js # grid/rt ↔ clip events conversions (21/21)
-│   ├── assetStore-test.html/js # IndexedDB audio assets (hash/dedup/gc) + peaks + import pipeline (25/25)
-│   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, missing badge (10/10)
+│   ├── assetStore-test.html/js # IndexedDB audio assets (hash/dedup/gc) + peaks + worker LOD + import pipeline (28/28)
+│   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, locate/replace, missing badge (15/15)
 │   ├── resample-test.html/js # project-rate decode + buffer resample (9/9)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
@@ -196,7 +196,11 @@ sid-synth/
 │   ├── audio/               # Binary audio assets (M4): IndexedDB store + import + peaks
 │   │   ├── assetStore.js    #   hash/dedup/gc asset store, manifest normalize
 │   │   ├── audioImport.js   #   file sniff/decode/import pipeline
-│   │   └── peaks.js         #   waveform peak computation + LOD downsample
+│   │   ├── peaks.js         #   waveform peak computation + LOD downsample
+│   │   ├── peaksWorker.js   #   off-thread multi-level peak computation
+│   │   ├── peaksClient.js   #   async peaks API with sync fallback
+│   │   ├── resample.js      #   project-rate decode + buffer resample
+│   │   └── mediaPool.js     #   import/preview/delete/locate/replace panel
 │   ├── arranger/            # Linear timeline (DAW arranger canvas)
 │   │   ├── arrangerLayout.js #   pure geometry: ticks↔px, ruler, pattern/clip layout, snap
 │   │   └── arranger.js      #   createArranger UI: ruler, lanes, playhead, zoom, clips

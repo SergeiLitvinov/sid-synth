@@ -67,11 +67,11 @@
   `http://localhost:3000/tests/transport-test.html` (48/48),
   `http://localhost:3000/tests/projectStore-test.html` (11/11, async debounce-тест требует Playwright/ожидания),
   `http://localhost:3000/tests/clipEvents-test.html` (21/21),
-  `http://localhost:3000/tests/assetStore-test.html` (25/25),
-  `http://localhost:3000/tests/mediaPool-test.html` (10/10),
+  `http://localhost:3000/tests/assetStore-test.html` (28/28),
+  `http://localhost:3000/tests/mediaPool-test.html` (15/15),
   `http://localhost:3000/tests/resample-test.html` (9/9),
   `http://localhost:3000/tests/wavExport-test.html` (8/8) и
-  `http://localhost:3000/tests/arranger-test.html` (207/207) — без FAIL (итого 594/594).
+  `http://localhost:3000/tests/arranger-test.html` (207/207) — без FAIL (итого 602/602).
 - E2E: `tests/integration.js` (225 шагов, 7 новых в r30 — drum editor; проверка в браузере потребуется при восстановлении Playwright MCP) гоняется браузерным харнессом (Playwright MCP)
   против живого приложения (порт 3000 или 3100) — без FAIL.
 - Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу

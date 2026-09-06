@@ -1,4 +1,4 @@
-import { createAssetStore } from '../src/audio/assetStore.js';
+import { createAssetStore, hashBuffer } from '../src/audio/assetStore.js';
 import { createMediaPool } from '../src/audio/mediaPool.js';
 
 const container = document.getElementById('container');
@@ -136,8 +136,49 @@ check('preview toggles play state on the row button', async () => {
   const btnOn = rows()[0].querySelector('.mp-play').classList.contains('on');
   const off = await pool.togglePreview(hash);
   const btnOff = rows()[0].querySelector('.mp-play').classList.contains('on');
-  await teardown();
   return on === true && btnOn === true && off === false && btnOff === false;
+});
+check('missing rows expose LOCATE and REPLACE buttons', async () => {
+  manifest.push({ hash: 'ghost1', name: 'gone.wav', mime: 'audio/wav', size: 10, sampleRate: 8000, channels: 1, duration: 0.1 });
+  await pool.refresh();
+  const row = rows().find(r => r.dataset.hash === 'ghost1');
+  return !!row && row.classList.contains('mp-missing')
+    && !!row.querySelector('.mp-locate') && !!row.querySelector('.mp-replace');
+});
+check('locateAsset relinks the same file by hash', async () => {
+  const mk = () => stubFile('found.wav', 'audio/wav', makeWavBytes({ freq: 330 }));
+  const hash = await hashBuffer(await mk().arrayBuffer());
+  manifest.push({ hash, name: 'found.wav', mime: 'audio/wav', size: 1024, sampleRate: 8000, channels: 1, duration: 0.1 });
+  await pool.refresh();
+  const res = await pool.locateAsset(hash, mk());
+  const row = rows().find(r => r.dataset.hash === hash);
+  return res.ok === true && !row.classList.contains('mp-missing') && (await store.has(hash)) === true;
+});
+check('locateAsset rejects a different file', async () => {
+  manifest.push({ hash: 'x', name: 'x.wav', mime: 'audio/wav', size: 8, sampleRate: 8000, channels: 1, duration: 0.1 });
+  await pool.refresh();
+  const res = await pool.locateAsset('x', stubFile('other.wav', 'audio/wav', makeWavBytes({ freq: 331 })));
+  const row = rows().find(r => r.dataset.hash === 'x');
+  return res.ok === false && res.reason === 'mismatch' && row.classList.contains('mp-missing');
+});
+check('replaceAsset swaps the entry and drops the orphan blob', async () => {
+  manifest = [{ hash: 'old', name: 'old.wav', mime: 'audio/wav', size: 8, sampleRate: 8000, channels: 1, duration: 0.1 }];
+  await pool.refresh();
+  const res = await pool.replaceAsset('old', stubFile('new.wav', 'audio/wav', makeWavBytes({ freq: 550 })));
+  return res.ok === true && manifest.length === 1 && manifest[0].hash === res.hash
+    && manifest[0].name === 'new.wav' && rows().length === 1
+    && !rows()[0].classList.contains('mp-missing') && (await store.has(res.hash)) === true;
+});
+check('title shows the missing count', async () => {
+  const ghost = h => ({ hash: h, name: h + '.wav', mime: 'audio/wav', size: 1, sampleRate: 8000, channels: 1, duration: 0.1 });
+  manifest = [ghost('m1'), ghost('m2')];
+  await pool.refresh();
+  const titled = pool.el.querySelector('.panel-title').textContent;
+  manifest = [];
+  await pool.refresh();
+  const plain = pool.el.querySelector('.panel-title').textContent;
+  await teardown();
+  return /2 missing/.test(titled) && plain === 'MEDIA POOL';
 });
 
 (async () => {

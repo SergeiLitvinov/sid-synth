@@ -1,6 +1,6 @@
 import {
   hashBuffer, normalizeAsset, collectReferencedHashes, createAssetStore,
-  computePeaks, computePeaksStereo, downsamplePeaks,
+  computePeaks, computePeaksStereo, downsamplePeaks, computePeaksAsync,
   sniffAudioMime, isSupportedAudioFile, importAudioFile,
 } from '../src/audio/index.js';
 
@@ -97,6 +97,22 @@ check('downsamplePeaks max-of-groups and copy on wide target', () => {
   const copy = downsamplePeaks(new Float32Array([0.5, 0.6]), 8);
   return down.length === 2 && Math.abs(down[0] - 0.9) < 1e-6 && Math.abs(down[1] - 0.4) < 1e-6
     && copy.length === 2 && Math.abs(copy[1] - 0.6) < 1e-6;
+});
+check('computePeaksAsync matches sync reference at several levels', async () => {
+  const data = new Float32Array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+  const out = await computePeaksAsync([data], [4, 2]);
+  const near = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+  return near(out[4], [0.2, 0.4, 0.6, 0.8]) && near(out[2], [0.4, 0.8]);
+});
+check('computePeaksAsync fallback agrees with worker path', async () => {
+  const data = new Float32Array([0.9, 0.1, 0.1, 0.9]);
+  const a = await computePeaksAsync([data], [2], { useWorker: false });
+  const b = await computePeaksAsync([data], [2]);
+  return Math.abs(a[2][0] - b[2][0]) < 1e-6 && Math.abs(a[2][1] - b[2][1]) < 1e-6;
+});
+check('computePeaksAsync empty input yields zero levels', async () => {
+  const out = await computePeaksAsync([], [4]);
+  return out[4].length === 4 && out[4].every(v => v === 0);
 });
 
 // ---- mime sniffing --------------------------------------------------------

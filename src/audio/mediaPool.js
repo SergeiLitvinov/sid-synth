@@ -1,13 +1,13 @@
-import { createAssetStore } from './assetStore.js';
+import { createAssetStore, hashBuffer, collectReferencedHashes } from './assetStore.js';
 import { importAudioFile, isSupportedAudioFile, decodeAudioBuffer } from './audioImport.js';
-import { computePeaksStereo } from './peaks.js';
+import { computePeaksAsync } from './peaksClient.js';
 import { projectSampleRate } from './resample.js';
 
 // Media pool panel (M4): file-picker + drag-and-drop import into the IndexedDB
 // asset store, metadata manifest round-tripped through the project JSON,
-// per-row audition preview and delete. Waveform sparklines come from peaks
-// cached on the store record at import time (single LOD; worker multi-LOD
-// is a later item).
+// per-row audition preview and delete. Waveform peaks are computed in a
+// worker (multi-level API, 256-bucket LOD cached on the store record) and
+// missing blobs get a locate/replace resolver instead of a dead row.
 export const MP_PEAK_BUCKETS = 256;
 
 function fmtDuration(sec) {
@@ -56,6 +56,13 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
   fileInput.accept = 'audio/*,.wav,.wave,.aiff,.aif,.mp3,.ogg,.oga,.flac,.m4a,.opus';
   fileInput.multiple = true;
   fileInput.style.display = 'none';
+  // Shared single-file picker for the missing-media resolver; pendingPick
+  // remembers which row and mode (locate/replace) opened it.
+  let pendingPick = null;
+  const locateInput = document.createElement('input');
+  locateInput.type = 'file';
+  locateInput.accept = 'audio/*,.wav,.wave,.aiff,.aif,.mp3,.ogg,.oga,.flac,.m4a,.opus';
+  locateInput.style.display = 'none';
 
   const status = document.createElement('div');
   status.className = 'mp-status';
@@ -64,7 +71,7 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
   list.className = 'mp-list';
   list.id = 'mpList';
 
-  toolbar.append(importBtn, fileInput);
+  toolbar.append(importBtn, fileInput, locateInput);
   el.append(title, toolbar, status, list);
 
   function setStatus(text) {
@@ -112,7 +119,8 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
     return decoded;
   }
 
-  // Persist peaks on the store record so waveforms render without re-decode.
+  // Peaks are computed off-thread; persisted on the store record so
+  // waveforms render without re-decode.
   async function cachePeaks(hash, audioBuffer) {
     if (!audioBuffer || typeof audioBuffer.numberOfChannels !== 'number') return;
     const channels = [];
@@ -120,7 +128,12 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
       try { channels.push(audioBuffer.getChannelData(c)); } catch (e) { /* ignore */ }
     }
     if (!channels.length) return;
-    const peaks = Array.from(computePeaksStereo(channels, MP_PEAK_BUCKETS));
+    let levels;
+    try {
+      levels = await computePeaksAsync(channels, [MP_PEAK_BUCKETS]);
+    } catch (e) { return; }
+    const peaks = levels && levels[MP_PEAK_BUCKETS];
+    if (!peaks) return;
     peaksCache.set(hash, peaks);
     try {
       const rec = await audioStore.get(hash);
@@ -217,21 +230,99 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
     await refresh();
   }
 
+  // Missing-media resolver: LOCATE re-attaches a blob whose bytes hash to
+  // the manifest entry (same file found elsewhere); REPLACE swaps the entry
+  // for a different file and drops the orphaned blob when unreferenced.
+  async function locateAsset(hash, file) {
+    if (!hash || !file) return { ok: false, reason: 'no file' };
+    let buf;
+    try {
+      buf = await file.arrayBuffer();
+    } catch (e) {
+      return { ok: false, reason: 'unreadable' };
+    }
+    let digest;
+    try {
+      digest = await hashBuffer(buf);
+    } catch (e) {
+      return { ok: false, reason: 'unhashable' };
+    }
+    if (digest !== hash) {
+      setStatus('hash mismatch — not the same file, use REPLACE');
+      return { ok: false, reason: 'mismatch' };
+    }
+    // Re-attach the blob, keeping manifest metadata (and any cached peaks).
+    // Works whether the record lost its blob or is gone entirely.
+    const entry = readManifest().find(a => a && a.hash === hash) || {};
+    const rec = await audioStore.get(hash);
+    const meta = { ...entry, ...(rec || {}) };
+    await audioStore.put({
+      hash,
+      name: meta.name || (file && file.name) || 'audio',
+      mime: (file && file.type) || meta.mime || '',
+      size: buf.byteLength,
+      sampleRate: meta.sampleRate || 0,
+      channels: meta.channels || 0,
+      duration: meta.duration || 0,
+      createdAt: meta.createdAt || new Date().toISOString(),
+      blob: new Blob([buf], { type: (file && file.type) || meta.mime || '' }),
+      ...(rec && rec.peaks ? { peaks: rec.peaks } : {}),
+    });
+    buffers.delete(hash);
+    peaksCache.delete(hash);
+    await refresh();
+    setStatus('relinked ' + (meta.name || 'asset'));
+    return { ok: true };
+  }
+
+  async function replaceAsset(hash, file) {
+    if (!hash || !file) return { ok: false, reason: 'no file' };
+    if (!isSupportedAudioFile(file)) {
+      setStatus('unsupported file type');
+      return { ok: false, reason: 'unsupported' };
+    }
+    let target = 0;
+    try { target = projectSampleRate(ctx); } catch (e) {}
+    let res;
+    try {
+      res = await importAudioFile(file, { ctx, store: audioStore, targetSampleRate: target || undefined });
+    } catch (e) {
+      setStatus('cannot decode file');
+      return { ok: false, reason: 'decode' };
+    }
+    if (res.audioBuffer && !peaksCache.has(res.hash)) await cachePeaks(res.hash, res.audioBuffer);
+    const next = readManifest().map(a => (a && a.hash === hash ? res.asset : a));
+    writeManifest(next);
+    // Drop the orphaned blob when nothing references it anymore.
+    const stillUsed = collectReferencedHashes({ assets: next }).includes(hash);
+    if (!stillUsed && res.hash !== hash) {
+      try { await audioStore.remove(hash); } catch (e) {}
+      buffers.delete(hash);
+      peaksCache.delete(hash);
+    }
+    await refresh();
+    setStatus('replaced with ' + res.asset.name);
+    return { ok: true, hash: res.hash };
+  }
+
   async function refresh() {
     while (list.firstChild) list.removeChild(list.firstChild);
     const manifest = readManifest();
     if (!manifest.length) {
+      title.textContent = 'MEDIA POOL';
       const empty = document.createElement('div');
       empty.className = 'mp-empty';
       empty.textContent = 'Drop audio files here or IMPORT — wav · mp3 · ogg · flac · aiff';
       list.appendChild(empty);
       return;
     }
+    let missingCount = 0;
     for (const asset of manifest) {
       const hash = asset && asset.hash;
       let rec = null;
       try { rec = hash ? await audioStore.get(hash) : null; } catch (e) { rec = null; }
       const missing = !rec || !rec.blob;
+      if (missing) missingCount++;
       const row = document.createElement('div');
       row.className = 'mp-row' + (missing ? ' mp-missing' : '');
       if (hash) row.dataset.hash = hash;
@@ -271,8 +362,22 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
       del.addEventListener('click', () => { removeAsset(hash).catch(err => setStatus(err.message)); });
 
       row.append(play, wave, info, del);
+      if (missing) {
+        const locate = document.createElement('button');
+        locate.className = 'rec-btn mp-locate';
+        locate.textContent = 'LOCATE';
+        locate.title = 'Relink the same file from disk (hash must match)';
+        locate.addEventListener('click', () => { pendingPick = { mode: 'locate', hash }; locateInput.click(); });
+        const replace = document.createElement('button');
+        replace.className = 'rec-btn mp-replace';
+        replace.textContent = 'REPLACE';
+        replace.title = 'Swap this entry for a different file';
+        replace.addEventListener('click', () => { pendingPick = { mode: 'replace', hash }; locateInput.click(); });
+        row.append(locate, replace);
+      }
       list.appendChild(row);
     }
+    title.textContent = missingCount > 0 ? 'MEDIA POOL · ' + missingCount + ' missing' : 'MEDIA POOL';
   }
 
   function onPick() { fileInput.click(); }
@@ -280,6 +385,15 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
     const files = [...(fileInput.files || [])];
     fileInput.value = '';
     if (files.length) importFiles(files).catch(err => setStatus(err.message));
+  }
+  function onLocateChange() {
+    const file = (locateInput.files || [])[0] || null;
+    const pick = pendingPick;
+    pendingPick = null;
+    locateInput.value = '';
+    if (!file || !pick) return;
+    const run = pick.mode === 'replace' ? replaceAsset(pick.hash, file) : locateAsset(pick.hash, file);
+    run.catch(err => setStatus(err.message));
   }
   function onDragOver(e) {
     e.preventDefault();
@@ -297,6 +411,7 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
 
   importBtn.addEventListener('click', onPick);
   fileInput.addEventListener('change', onFileChange);
+  locateInput.addEventListener('change', onLocateChange);
   el.addEventListener('dragover', onDragOver);
   el.addEventListener('dragleave', onDragLeave);
   el.addEventListener('drop', onDrop);
@@ -305,6 +420,7 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
     previewStop();
     importBtn.removeEventListener('click', onPick);
     fileInput.removeEventListener('change', onFileChange);
+    locateInput.removeEventListener('change', onLocateChange);
     el.removeEventListener('dragover', onDragOver);
     el.removeEventListener('dragleave', onDragLeave);
     el.removeEventListener('drop', onDrop);
@@ -314,5 +430,5 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
 
   refresh().catch(err => setStatus(err.message));
 
-  return { el, refresh, importFiles, togglePreview, previewStop, dispose, getStatus: () => statusText };
+  return { el, refresh, importFiles, locateAsset, replaceAsset, togglePreview, previewStop, dispose, getStatus: () => statusText };
 }
