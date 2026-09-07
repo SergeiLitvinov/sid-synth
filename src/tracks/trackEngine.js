@@ -122,24 +122,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
   };
 
   // ---- MIDI clips -----------------------------------------------------
-  // Backlog #9: the loop clip (clips[0], start 0) is the canonical note store.
-  // Grid cells + realtime notes are mirrored into its `events` (PPQ ticks), and
-  // a clip-first document (events inside the clip, empty grid/rt) is expanded
-  // back into grid/rt so the step scheduler plays unchanged.
-  const loopMirrors = new WeakMap();
-  const mirrorKey = t => JSON.stringify([t.grid, (t.rt || []).map(({ note, start, dur, velocity }) => ({ note, start, dur, velocity }))]);
-  function syncLoopClip(t) {
-    if (!t.clips || !t.clips.length) return;
-    const loop = t.clips.find(c => c.start === 0);
-    if (!loop) return;
-    const key = mirrorKey(t);
-    if (loopMirrors.get(t) === key) return;
-    loop.events = mergeClipEvents(
-      gridToClipEvents(t.grid, { ppq: engine.ppq }),
-      rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq }),
-    );
-    loopMirrors.set(t, key);
-  }
+  // The loop clip (start 0) is the canonical note store: recording, step
+  // edits and the scheduler all read and write its `events` (PPQ ticks).
+  // t.grid / t.rt survive only as legacy snapshot fields; nothing derives
+  // clip events from them anymore (the mirror is gone).
 
   // ---- track management ------------------------------------------------
   engine.addTrack = (cfg = {}) => {
@@ -163,10 +149,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
         t.grid = clipEventsToGrid(loopClip.events, { ppq: engine.ppq });
         t.rt = clipEventsToRt(loopClip.events, { bpm: engine.bpm, ppq: engine.ppq });
       }
-      loopMirrors.set(t, mirrorKey(t));
     }
     t.voice = new TrackVoices(engine.ctx, t, dest);
-    syncLoopClip(t);
     engine.tracks.push(t);
     engine.byId[t.id] = t;
     _applyAudibility();
@@ -219,8 +203,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if ('clips' in patch) {
       const loop = t.clips.find(c => c.start === 0);
       if (loop) t.grid = clipEventsToGrid(loop.events || [], { ppq: engine.ppq });
-      loopMirrors.set(t, mirrorKey(t));
-    } else if ('grid' in patch || 'rt' in patch) syncLoopClip(t);
+    }
     _applyAudibility();
     if ('inserts' in patch && t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
     _emitState();
@@ -300,8 +283,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (clip.start === 0 && clip.events.length) {
       t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
       t.rt = [];
-      loopMirrors.set(t, mirrorKey(t));
-    } else syncLoopClip(t);
+    }
     _emitState();
     return clip;
   };
@@ -314,7 +296,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (t.clips[i].start === 0) {
       t.grid = Array(STEPS_PER_LOOP).fill(null);
       t.rt = [];
-      loopMirrors.delete(t);
     }
     t.clips.splice(i, 1);
     _emitState();
@@ -343,7 +324,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (clip === loop) {
       t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
       t.rt = [];
-      loopMirrors.set(t, mirrorKey(t));
     }
     _emitState();
     return true;
@@ -390,7 +370,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     clip.length = splitOffset;
     clip.events = leftEvents;
     t.clips.push(right);
-    syncLoopClip(t);
     _emitState();
     return right;
   };
@@ -410,7 +389,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
       audio: clip.audio,
     });
     t.clips.push(copy);
-    syncLoopClip(t);
     _emitState();
     return copy;
   };
@@ -436,7 +414,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
       t.clips.push(copy);
       copies.push(copy);
     }
-    syncLoopClip(t);
     _emitState();
     return copies;
   };
@@ -540,7 +517,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const t = engine.byId[id];
     const clip = engine.getStepClip(id);
     if (clip) { engine.setClipEvents(id, clip.id, []); return; }
-    if (t) { t.grid = Array(STEPS_PER_LOOP).fill(null); t.rt = []; syncLoopClip(t); _emitState(); }
+    if (t) { t.grid = Array(STEPS_PER_LOOP).fill(null); t.rt = []; _emitState(); }
   };
 
   // ---- transport --------------------------------------------------------
@@ -827,12 +804,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
         }
         if (clip) {
           clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
-          loopMirrors.set(t, mirrorKey(t));
         }
       }
     });
     engine._recBuffer.clear();
-    engine.tracks.forEach(syncLoopClip);
   }
 
   // Clear the loop (start-0) clip so a REPLACE-mode record starts empty —
@@ -847,7 +822,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
     t.grid = t.grid.map(() => null);
     t.rt = [];
-    syncLoopClip(t);
+    _emitState();
   }
 
   // Snap a recorded note (in PPQ ticks) to the grid; mirrors quantizeStart from
