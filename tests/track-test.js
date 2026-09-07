@@ -117,7 +117,7 @@ check('grid playback uses per-cell duration', () => {
   d.play();
   d.advanceAndTick(100); // elapsed 0.1s
   const hit = d.spy.find(s => s.note === 'C4');
-  const expected = 0.125 * 4 - 0.01; // 4 steps minus the 10ms guard
+  const expected = (4 * 120) / 960; // 4 steps in ticks, played from the loop clip
   return !!hit && Math.abs(hit.dur - expected) < 1e-6;
 });
 
@@ -693,7 +693,8 @@ function sawRamp(hist, v) {
 }
 check('grid cell velocity scales the voice envelope gain', () => {
   const d = makeFixture(120);
-  d.track.grid[0] = { note: 'C4', dur: 1, vel: 64 };
+  d.engine.toggleGridStep('trk_a', 0, 'C4');
+  d.engine.setGridStep('trk_a', 0, { vel: 64 });
   d.play();
   d.advanceAndTick(100); // step 0 plays at 0.03s, well inside the lookahead
   const hit = d.spy.find(s => s.note === 'C4');
@@ -708,7 +709,7 @@ check('grid cells without velocity default to velocity 100', () => {
   d.advanceAndTick(100);
   const hit = d.spy.find(s => s.note === 'C4');
   const hist = envHistory(d, 0);
-  return !!hit && hit.vel === undefined && sawRamp(hist, 100 / 127) && sawRamp(hist, 0.7 * (100 / 127));
+  return !!hit && hit.vel === 100 && sawRamp(hist, 100 / 127) && sawRamp(hist, 0.7 * (100 / 127));
 });
 
 check('arranged clip event velocity reaches the voice and scales gain', () => {

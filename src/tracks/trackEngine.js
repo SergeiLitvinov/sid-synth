@@ -151,7 +151,9 @@ export function createTrackEngine(ctx, dest, config = {}) {
       id = 'trk_' + (++engine._idCount);
     }
     const t = defaultTrackConfig({ ...cfg, id });
-    if (engine.playbackMode === 'song' && !t.clips.length && (t.grid.some(Boolean) || t.rt.length)) {
+    // Legacy backing (grid/rt) folds once into a start-0 loop clip so the
+    // schedulers never read grid/rt directly anymore.
+    if (!t.clips.length && (t.grid.some(Boolean) || t.rt.length)) {
       t.clips.push(defaultClip({ start: 0, events: mergeClipEvents(gridToClipEvents(t.grid, { ppq: engine.ppq }), rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq })) }));
     }
     const loopClip = (t.clips || []).find(c => c.start === 0);
@@ -500,20 +502,16 @@ export function createTrackEngine(ctx, dest, config = {}) {
   engine.toggleGridStep = (id, step, note, dur) => {
     const t = engine.byId[id];
     if (!t || !Number.isInteger(step) || step < 0 || step >= STEPS_PER_LOOP) return false;
+    // The step grid is a projection of clip events: edits always land on a
+    // clip (creating the loop clip when the track has none), never on grid.
     let clip = engine.getStepClip(id);
-    if (!clip && engine.playbackMode === 'song') clip = engine.addClip(id, { start: 0 });
-    if (clip) {
-      const was = !!engine.getStepGrid(id)[step];
-      engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, {
-        note: note || t.gridNote, dur: dur || t.gridDur,
-      }, { ppq: engine.ppq, remove: was }));
-      return was ? false : engine.getStepGrid(id)[step];
-    }
-    const was = t.grid[step];
-    if (was) { t.grid[step] = null; syncLoopClip(t); return false; }
-    t.grid[step] = { note: note || t.gridNote || 'C4', dur: dur || t.gridDur || 1 };
-    syncLoopClip(t);
-    return t.grid[step];
+    if (!clip) clip = engine.addClip(id, { start: 0 });
+    if (!clip) return false;
+    const was = !!engine.getStepGrid(id)[step];
+    engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, {
+      note: note || t.gridNote, dur: dur || t.gridDur,
+    }, { ppq: engine.ppq, remove: was }));
+    return was ? false : engine.getStepGrid(id)[step];
   };
 
   // Change the pitch and/or duration of an existing grid step.
@@ -521,19 +519,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const t = engine.byId[id];
     if (!t || !Number.isInteger(step) || step < 0 || step >= STEPS_PER_LOOP) return null;
     let clip = engine.getStepClip(id);
-    if (!clip && engine.playbackMode === 'song') clip = engine.addClip(id, { start: 0 });
-    if (clip) {
-      const values = engine.getStepGrid(id)[step] ? patch : { note: t.gridNote, dur: t.gridDur, ...patch };
-      engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, values, { ppq: engine.ppq }));
-      return engine.getStepGrid(id)[step];
-    }
-    const cur = normalizeCell(t.grid[step]) || { note: t.gridNote || 'C4', dur: t.gridDur || 1 };
-    if (patch.note) cur.note = patch.note;
-    if (typeof patch.dur === 'number' && patch.dur > 0) cur.dur = patch.dur;
-    t.grid[step] = cur;
-    syncLoopClip(t);
-    _emitState();
-    return cur;
+    if (!clip) clip = engine.addClip(id, { start: 0 });
+    if (!clip) return null;
+    const values = engine.getStepGrid(id)[step] ? patch : { note: t.gridNote, dur: t.gridDur, ...patch };
+    engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, values, { ppq: engine.ppq }));
+    return engine.getStepGrid(id)[step];
   };
 
   engine.setGridNote = (id, note) => {
@@ -674,9 +664,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._playStartCtx = engine.ctx.currentTime + 0.03;
     engine._cursorLoopAbs = engine._playStartCtx;
     engine._resetLinearPlayback();
-    engine.tracks.forEach(t => {
-      t.rt.forEach(ev => { ev._nextAbs = engine._playStartCtx + ev.start; });
-    });
     _emitState();
     _scheduleAhead(0.02);
     engine._timer = setInterval(_tick, 25);
@@ -690,7 +677,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
     engine._recording = true;
     engine._recBuffer.clear();
-    engine.tracks.forEach(t => t.rt.forEach(ev => delete ev._open));
     _emitState();
   };
 
@@ -909,6 +895,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
     };
 
     // --- grid (cursor keeps monotonic advance across loops) ---
+    // Reads loop-clip events only: without a start-0 clip there is nothing
+    // step-scheduled (legacy grid/rt backing folds into a clip on load).
     let gridLoopAbs = engine._cursorLoopAbs + Math.floor(engine._cursor / STEPS_PER_LOOP) * engine.loopDur;
     // cursor is always < STEPS_PER_LOOP, so gridLoopAbs === _cursorLoopAbs;
     while (gridLoopAbs + engine._cursor * engine.stepDur < endAbs) {
@@ -916,19 +904,15 @@ export function createTrackEngine(ctx, dest, config = {}) {
       engine.tracks.forEach(t => {
         if (engine.playbackMode === 'song') return;
         const loopClip = t.clips.find(c => c.start === 0);
-        if (loopClip) {
-          const step = engine.ppq / 4;
-          const tps = ticksPerSecond(engine.bpm, engine.ppq);
-          loopClip.events.forEach(ev => {
-            if (ev.start >= engine._cursor * step && ev.start < (engine._cursor + 1) * step && ev.start < loopClip.length) {
-              const duration = Math.min(ev.dur, loopClip.length - ev.start) / tps;
-              if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + ev.start / tps, duration, ev.velocity);
-            }
-          });
-          return;
-        }
-        const cell = normalizeCell(t.grid[engine._cursor]);
-        if (cell) scheduleNoteOn(t, cell.note, timeAbs, engine.stepDur * Math.max(1, cell.dur) - 0.01, cell.vel);
+        if (!loopClip) return;
+        const step = engine.ppq / 4;
+        const tps = ticksPerSecond(engine.bpm, engine.ppq);
+        loopClip.events.forEach(ev => {
+          if (ev.start >= engine._cursor * step && ev.start < (engine._cursor + 1) * step && ev.start < loopClip.length) {
+            const duration = Math.min(ev.dur, loopClip.length - ev.start) / tps;
+            if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + ev.start / tps, duration, ev.velocity);
+          }
+        });
       });
       if (engine.onGridStep) engine.onGridStep(engine._cursor, timeAbs);
       engine._cursor++;
@@ -938,33 +922,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
         gridLoopAbs = engine._cursorLoopAbs;
       }
     }
-
-    // --- realtime notes (per-event next occurrence pointer) ---
-    engine.tracks.forEach(t => {
-      if (engine.playbackMode === 'song' || t.clips.some(c => c.start === 0)) return;
-      t.rt.forEach(ev => {
-        if (typeof ev._nextAbs !== 'number') ev._nextAbs = engine._playStartCtx + ev.start;
-      });
-      t.rt.forEach(ev => {
-        while (ev._nextAbs < endAbs) {
-          const loopStart = ev._nextAbs - ev.start;
-          const offWithin = Math.min(ev.dur || 0, loopStart + engine.loopDur - ev._nextAbs);
-          const timeAbs = ev._nextAbs;
-          if (ev.dur > 0) {
-            if (offWithin > 0.01) {
-              scheduleNoteOn(t, ev.note, timeAbs, offWithin, ev.velocity);
-            } else {
-              scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
-              t.voice.noteOff(ev.note, timeAbs + Math.max(0.03, engine.loopDur - ev.start));
-            }
-          } else if (ev.dur === 0) {
-            scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
-            t.voice.noteOff(ev.note, loopStart + engine.loopDur);
-          }
-          ev._nextAbs += engine.loopDur;
-        }
-      });
-    });
 
     // --- arranged clips (backlog #24): linear full-song playback ---------
     // Every clip except the loop mirror (the one the grid/rt loop scheduler
