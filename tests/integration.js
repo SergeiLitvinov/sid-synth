@@ -51,7 +51,8 @@
 // backlog M4: audio clip UI (pool +CLIP, arranger waveform, piano roll editor).
 // backlog M4: audio input panel (device picker, monitor, meter).
 // backlog M4: take recording (worklet capture, REC button).
-// 246 steps total.
+// backlog M4: punch in/out + count-in.
+// 249 steps total.
 async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -2200,6 +2201,23 @@ async (page) => {
   });
   r.steps = r.steps.concat(r34.steps);
   r.steps.push({ name: 'r34: take REC section ran', ok: true });
+
+  // 35. Count-in + punch controls (M4 recording): presence only — timing
+  // behavior is covered by audioInput-test (fake device + offline render).
+  const r35 = await page.evaluate(() => {
+    const results = { steps: [] };
+    function step(name, ok, extra = null) {
+      results.steps.push({ name, ok, extra: extra || null });
+    }
+    step('count-in selector exists', !!document.querySelector('#audioInput #inpCount'));
+    step('punch buttons exist',
+      !!(document.querySelector('#audioInput #inpPunch')
+        && document.querySelector('#audioInput #inpPunchIn')
+        && document.querySelector('#audioInput #inpPunchOut')));
+    return results;
+  });
+  r.steps = r.steps.concat(r35.steps);
+  r.steps.push({ name: 'r35: punch/count-in section ran', ok: true });
 
   return r;
 }

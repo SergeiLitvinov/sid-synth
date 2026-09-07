@@ -1,5 +1,6 @@
 import { listInputDevices, requestInputStream, stopStream, createInputMonitor } from './audioInput.js';
-import { createTakeRecorder, finalizeTake } from './capture.js';
+import { createTakeRecorder, finalizeTake, trimTakeToPunch, isPunchOutReached } from './capture.js';
+import { playCountIn } from './metronome.js';
 import { addClipCommand } from '../project/trackCommands.js';
 import { ticksPerSecond } from '../project/clipEvents.js';
 
@@ -34,6 +35,10 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
   let recorder = null;
   let takeStartTicks = 0;
   let takeCount = 0;
+  let countIn = null; // active count-in handle (take starts after it)
+  let punchOn = false;
+  let punchIn = null; // ticks, captured from the transport
+  let punchOut = null;
   let deviceId = '';
   let rafId = 0;
   let statusText = '';
@@ -68,6 +73,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
   toolbar.append(select, refreshBtn, monBtn, meter);
   // Take REC lives only when the host wires engine/history/transport/store.
   let recBtn = null;
+  let countSel = null;
   if (takeCfg && takeCfg.engine && takeCfg.store) {
     recBtn = document.createElement('button');
     recBtn.className = 'rec-btn inp-rec';
@@ -75,6 +81,18 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     recBtn.textContent = '●';
     recBtn.title = 'Record a take into an audio clip on the active track';
     toolbar.append(recBtn);
+    // Count-in: metronome bars before the take starts rolling.
+    countSel = document.createElement('select');
+    countSel.className = 'inp-count';
+    countSel.id = 'inpCount';
+    countSel.title = 'Count-in bars before recording';
+    [['0', 'no count'], ['1', '1 bar'], ['2', '2 bars']].forEach(([v, label]) => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = label;
+      countSel.appendChild(o);
+    });
+    toolbar.append(countSel);
   }
   // Latency calibration row: measured system latency (read-only) plus a
   // manual trim in ms, persisted across sessions. Takes are placed earlier
@@ -138,6 +156,36 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     } catch (e) {}
   });
 
+  // Punch region (take deps only): IN/OUT capture transport ticks, PUNCH
+  // arms region trim + auto-stop. Session-local like device selection.
+  let punchBtn = null;
+  let punchInBtn = null;
+  let punchOutBtn = null;
+  if (takeCfg && takeCfg.engine && takeCfg.store) {
+    const punchRow = document.createElement('div');
+    punchRow.className = 'inp-punchrow';
+    const punchName = document.createElement('span');
+    punchName.className = 'inp-lat-name';
+    punchName.textContent = 'punch';
+    punchBtn = document.createElement('button');
+    punchBtn.className = 'rec-btn inp-punch';
+    punchBtn.id = 'inpPunch';
+    punchBtn.textContent = 'PUNCH';
+    punchBtn.title = 'Record only inside the punch region (auto-stop at OUT)';
+    punchInBtn = document.createElement('button');
+    punchInBtn.className = 'rec-btn inp-punch-in';
+    punchInBtn.id = 'inpPunchIn';
+    punchInBtn.textContent = 'IN';
+    punchInBtn.title = 'Set punch-in at the playhead';
+    punchOutBtn = document.createElement('button');
+    punchOutBtn.className = 'rec-btn inp-punch-out';
+    punchOutBtn.id = 'inpPunchOut';
+    punchOutBtn.textContent = 'OUT';
+    punchOutBtn.title = 'Set punch-out at the playhead';
+    punchRow.append(punchName, punchBtn, punchInBtn, punchOutBtn);
+    el.insertBefore(punchRow, status);
+  }
+
   function stopLoop() {
     if (rafId) {
       try { cancelAnimationFrame(rafId); } catch (e) {}
@@ -162,13 +210,25 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     stopLoop();
     const frame = () => {
       updateMeter();
+      // Punch auto-stop: end the take when the playhead reaches punch-out
+      // (the stop path flips isRecording synchronously, so no double-fire).
+      if (recorder && recorder.isRecording()
+        && isPunchOutReached({ recording: true, punchOn, punchOut, posTicks: transportTicks() })) {
+        onRec().catch(err => setStatus(err.message));
+      }
       rafId = requestAnimationFrame(frame);
     };
     if (typeof requestAnimationFrame === 'function') rafId = requestAnimationFrame(frame);
+    else updateMeter();
   }
 
   function teardownStream() {
     stopLoop();
+    if (countIn) {
+      countIn.cancel();
+      countIn = null;
+      if (recBtn) recBtn.classList.remove('counting');
+    }
     if (recorder && recorder.isRecording()) {
       recorder.stop();
       if (recBtn) recBtn.classList.remove('on');
@@ -259,6 +319,40 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     monBtn.classList.toggle('on', on);
   }
 
+  function syncPunchButtons() {
+    if (punchBtn) punchBtn.classList.toggle('on', punchOn);
+    if (punchInBtn) {
+      punchInBtn.classList.toggle('on', punchIn != null);
+      punchInBtn.title = punchIn != null ? 'Punch-in at tick ' + punchIn + ' (click to re-set)' : 'Set punch-in at the playhead';
+    }
+    if (punchOutBtn) {
+      punchOutBtn.classList.toggle('on', punchOut != null);
+      punchOutBtn.title = punchOut != null ? 'Punch-out at tick ' + punchOut + ' (click to re-set)' : 'Set punch-out at the playhead';
+    }
+  }
+
+  function onPunch() {
+    punchOn = !punchOn;
+    syncPunchButtons();
+    if (!punchOn) setStatus('punch off');
+    else if (punchIn == null || punchOut == null) setStatus('punch armed — set IN and OUT');
+    else setStatus('punch ' + punchIn + ' → ' + punchOut + ' ticks');
+  }
+
+  function onPunchIn() {
+    punchIn = transportTicks();
+    if (punchOut != null && punchOut <= punchIn) punchOut = null;
+    syncPunchButtons();
+    setStatus('punch in at tick ' + punchIn);
+  }
+
+  function onPunchOut() {
+    punchOut = transportTicks();
+    if (punchIn != null && punchOut <= punchIn) punchIn = null;
+    syncPunchButtons();
+    setStatus('punch out at tick ' + punchOut);
+  }
+
   function transportTicks() {
     try {
       if (takeCfg && takeCfg.transport && typeof takeCfg.transport.getState === 'function') {
@@ -286,8 +380,18 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
 
   // Take REC: toggles capture; on stop the take becomes an asset plus an
   // audio clip on the active track at the position where recording started.
+  // With count-in bars set, a metronome pre-roll runs first (second press
+  // cancels it); with punch armed, capture auto-stops at punch-out and the
+  // take is trimmed to the punch region.
   async function onRec() {
     if (!takeCfg) return;
+    if (countIn) {
+      countIn.cancel();
+      countIn = null;
+      if (recBtn) recBtn.classList.remove('counting');
+      setStatus('count-in cancelled');
+      return;
+    }
     if (!recorder) {
       try {
         recorder = createTakeRecorder({ ctx });
@@ -305,6 +409,21 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     if (!stream || !sourceNode) {
       setStatus('select an input first');
       return;
+    }
+    const bars = countSel ? parseInt(countSel.value, 10) || 0 : 0;
+    if (bars > 0) {
+      const bpm = (takeCfg.engine && takeCfg.engine.bpm) || 120;
+      setStatus('count-in…');
+      if (recBtn) recBtn.classList.add('counting');
+      const handle = playCountIn({ ctx, destination: destination || (ctx && ctx.destination), bpm, bars });
+      countIn = handle;
+      const completed = await handle.promise;
+      countIn = null;
+      if (recBtn) recBtn.classList.remove('counting');
+      if (!completed) {
+        setStatus('count-in cancelled');
+        return;
+      }
     }
     takeStartTicks = transportTicks();
     try {
@@ -342,12 +461,28 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
       // Placement compensation: captured audio lags the transport by the
       // effective latency, so the clip starts earlier by that amount.
       const compTicks = Math.round(getLatencySec() * tps);
+      const rawStart = Math.max(0, takeStartTicks - compTicks);
+      const rawLen = Math.max(480, Math.round(take.duration * tps));
+      let start = rawStart;
+      let length = rawLen;
+      let offset = 0;
+      if (punchOn) {
+        const trimmed = trimTakeToPunch({ startTicks: rawStart, lengthTicks: rawLen, punchIn, punchOut });
+        if (!trimmed) {
+          setStatus('take outside punch range, discarded');
+          refreshSysLabel();
+          return res;
+        }
+        start = trimmed.startTicks;
+        length = trimmed.lengthTicks;
+        offset = trimmed.offsetTicks / tps;
+      }
       const clip = {
         name: res.asset.name || 'Take',
-        start: Math.max(0, takeStartTicks - compTicks),
-        length: Math.max(480, Math.round(take.duration * tps)),
+        start,
+        length,
         events: [],
-        audio: { hash: res.hash },
+        audio: { hash: res.hash, ...(offset > 0 ? { offset } : {}) },
       };
       try {
         runCommand(addClipCommand(engine, targetId, clip));
@@ -364,6 +499,9 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
   refreshBtn.addEventListener('click', onRefresh);
   monBtn.addEventListener('click', onMon);
   if (recBtn) recBtn.addEventListener('click', onRecClick);
+  if (punchBtn) punchBtn.addEventListener('click', onPunch);
+  if (punchInBtn) punchInBtn.addEventListener('click', onPunchIn);
+  if (punchOutBtn) punchOutBtn.addEventListener('click', onPunchOut);
 
   function onRecClick() {
     onRec().catch(err => setStatus(err.message));
@@ -375,6 +513,9 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     refreshBtn.removeEventListener('click', onRefresh);
     monBtn.removeEventListener('click', onMon);
     if (recBtn) recBtn.removeEventListener('click', onRecClick);
+    if (punchBtn) punchBtn.removeEventListener('click', onPunch);
+    if (punchInBtn) punchInBtn.removeEventListener('click', onPunchIn);
+    if (punchOutBtn) punchOutBtn.removeEventListener('click', onPunchOut);
   }
 
   refreshDevices().catch(err => setStatus(err.message));
@@ -385,7 +526,9 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     getDeviceId: () => deviceId,
     isMonitoring: () => !!(monitor && monitor.isMonitoring()),
     isRecording: () => !!(recorder && recorder.isRecording()),
+    isCounting: () => !!countIn,
     getTakeDuration: () => (recorder ? recorder.getDuration() : 0),
     getLatencySec,
+    getPunch: () => ({ on: punchOn, inTicks: punchIn, outTicks: punchOut }),
   };
 }

@@ -6,6 +6,7 @@ export { projectSampleRate, decodeAtSampleRate, resampleBuffer } from './resampl
 export { computePeaksAsync } from './peaksClient.js';
 export { normalizeAudioRef, createAudioEngine } from './audioEngine.js';
 export { drawWaveform } from './waveform.js';
-export { ensureCaptureWorklet, createTakeRecorder, finalizeTake } from './capture.js';
+export { ensureCaptureWorklet, createTakeRecorder, finalizeTake, trimTakeToPunch, isPunchOutReached } from './capture.js';
+export { playCountIn, COUNT_IN_DOWNBEAT_HZ, COUNT_IN_BEAT_HZ } from './metronome.js';
 export { listInputDevices, requestInputStream, stopStream, createInputMonitor } from './audioInput.js';
 export { createInputUI, measureOutputLatency, INPUT_LATENCY_KEY } from './inputUI.js';

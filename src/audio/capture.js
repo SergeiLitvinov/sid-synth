@@ -102,6 +102,22 @@ export function createTakeRecorder({ ctx } = {}) {
   };
 }
 
+// Trim a take region to the punch range (M4 punch in/out): returns the
+// sounding sub-region { startTicks, offsetTicks, lengthTicks } or null when
+// the take never overlaps the punch. Null punch sides stay open.
+export function trimTakeToPunch({ startTicks, lengthTicks, punchIn, punchOut }) {
+  const s = punchIn != null ? Math.max(startTicks, punchIn) : startTicks;
+  const e = punchOut != null ? Math.min(startTicks + lengthTicks, punchOut) : startTicks + lengthTicks;
+  if (!(e > s)) return null;
+  return { startTicks: s, offsetTicks: s - startTicks, lengthTicks: e - s };
+}
+
+// Auto-stop predicate for the meter loop: recording + punch armed + the
+// playhead reached punch-out.
+export function isPunchOutReached({ recording, punchOn, punchOut, posTicks }) {
+  return !!recording && !!punchOn && punchOut != null && posTicks >= punchOut;
+}
+
 // Finalize a recorded take: WAV-encode, hash, dedup into the asset store,
 // return the manifest-ready asset. The WAV Blob is the canonical take
 // artifact (byte-identical round-trip through the store).

@@ -1175,6 +1175,11 @@ button.btn-red:hover { background: #aa4444; color: #000; }
 .inp-select { background: #060a06; color: #4af74a; border: 1px solid #2a3a2a; font-size: 11px; max-width: 240px; }
 .inp-mon.on { background: #6dc9ff; border-color: #6dc9ff; color: #000; box-shadow: 0 0 12px #6dc9ff; }
 .inp-rec.on { background: #ff5555; border-color: #ff5555; color: #000; box-shadow: 0 0 12px #ff5555; }
+.inp-rec.counting { background: #ffe66d; border-color: #ffe66d; color: #000; box-shadow: 0 0 12px #ffe66d; }
+.inp-count { background: #060a06; color: #4af74a; border: 1px solid #2a3a2a; font-size: 11px; }
+.inp-punchrow { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.inp-punch.on { background: #c586ff; border-color: #c586ff; color: #000; box-shadow: 0 0 12px #c586ff; }
+.inp-punch-in.on, .inp-punch-out.on { border-color: #4af74a; color: #4af74a; }
 .inp-meter { width: 120px; height: 12px; background: #0a0f0a; border: 1px solid #111; flex: none; }
 .inp-status { color: #3a6a3a; font-size: 11px; min-height: 14px; }
 .inp-latrow { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }

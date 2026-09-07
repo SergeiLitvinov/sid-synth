@@ -171,11 +171,11 @@ sid-synth/
 │   ├── mediaPool-test.html/js # import UI: picker/drop, manifest, preview, delete, locate/replace, +CLIP, missing badge (16/16)
 │   ├── resample-test.html/js # project-rate decode + buffer resample (9/9)
 │   ├── audioEngine-test.html/js # clip voices: start/offset/catch-up/fades/stop (11/11)
-│   ├── audioInput-test.html/js # input devices, monitor gate, meter, take REC, latency trim (18/18, нужны fake-mic флаги)
+│   ├── audioInput-test.html/js # input devices, monitor gate, meter, take REC, latency trim, metronome, punch (25/25, нужны fake-mic флаги)
 │   ├── wavExport-test.html/js #  RIFF/WAVE header + PCM mapping + clamp/round + stereo interleave (8/8)
 │   ├── mockAudioContext.js #   мок Web Audio API
 │   ├── serve-ps.ps1        #   PS7-only no-cache server (порт 3100, без Python)
-│   └── integration.js      #   E2E против живого приложения (239 шагов, Playwright)
+│   └── integration.js      #   E2E против живого приложения (249 шагов, Playwright)
 ├── src/
 │   ├── main.js             # Core logic, drag-drop, visualization
 │   ├── services/            # Services (router, presets, keyboard, MIDI, etc.)
@@ -204,8 +204,9 @@ sid-synth/
 │   │   ├── resample.js      #   project-rate decode + buffer resample
 │   │   ├── waveform.js      #   waveform canvas rendering (pool + arranger)
 │   │   ├── audioInput.js    #   input devices, stream, monitor + meter
-│   │   ├── capture.js       #   worklet take recorder + finalizeTake
+│   │   ├── capture.js       #   worklet take recorder + finalizeTake + punch trim
 │   │   ├── captureProcessor.js # take capture worklet (transfer chunks)
+│   │   ├── metronome.js     #   count-in clicks (accented, cancellable)
 │   │   ├── inputUI.js       #   input panel (picker, MON, meter)
 │   │   └── mediaPool.js     #   import/preview/delete/locate/replace/+CLIP panel
 │   ├── arranger/            # Linear timeline (DAW arranger canvas)

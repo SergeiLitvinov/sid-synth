@@ -2,6 +2,8 @@ import {
   listInputDevices, requestInputStream, stopStream, createInputMonitor,
   createTakeRecorder, finalizeTake, ensureCaptureWorklet, createAssetStore,
   measureOutputLatency, INPUT_LATENCY_KEY,
+  playCountIn, COUNT_IN_DOWNBEAT_HZ, COUNT_IN_BEAT_HZ,
+  trimTakeToPunch, isPunchOutReached,
 } from '../src/audio/index.js';
 import { createInputUI } from '../src/audio/index.js';
 import { createHistory } from '../src/project/history.js';
@@ -340,6 +342,184 @@ check('take placement compensates effective latency', async () => {
     req.onblocked = () => resolve();
   });
   try { localStorage.removeItem(INPUT_LATENCY_KEY); } catch (e) {}
+  return ok;
+});
+check('metronome schedules accented beats per bar', () => {
+  const started = [];
+  const stopped = [];
+  const freqs = [];
+  const fake = {
+    currentTime: 0,
+    destination: {},
+    createOscillator: () => ({
+      type: '',
+      frequency: {
+        _v: 0,
+        set value(v) { this._v = v; freqs.push(v); },
+        get value() { return this._v; },
+      },
+      connect() {},
+      disconnect() {},
+      start(at) { started.push(at); },
+      stop(at) { stopped.push(at === undefined ? 'now' : at); },
+    }),
+    createGain: () => ({
+      gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} },
+      connect() {},
+    }),
+  };
+  const h = playCountIn({ ctx: fake, bpm: 120, bars: 2 });
+  h.cancel();
+  const scheduled = stopped.filter(s => typeof s === 'number');
+  const immediate = stopped.filter(s => s === 'now');
+  return h.beats === 8 && h.beatSec === 0.5 && started.length === 8
+    && Math.abs(started[0] - 0.05) < 1e-9 && Math.abs(started[4] - 2.05) < 1e-9
+    && scheduled.length === 8 && immediate.length === 8
+    && freqs.length === 8 && freqs[0] === COUNT_IN_DOWNBEAT_HZ
+    && freqs[1] === COUNT_IN_BEAT_HZ && freqs[4] === COUNT_IN_DOWNBEAT_HZ;
+});
+check('metronome cancel resolves false', async () => {
+  const ctx = new AudioContext();
+  try {
+    const h = playCountIn({ ctx, destination: ctx.destination, bpm: 240, bars: 1 });
+    h.cancel();
+    const done = await h.promise;
+    await ctx.close().catch(() => {});
+    return done === false;
+  } catch (e) {
+    try { await ctx.close(); } catch (err) {}
+    throw e;
+  }
+});
+check('metronome renders one burst per beat offline', async () => {
+  const ctx = new OfflineAudioContext(1, 96000, 48000);
+  playCountIn({ ctx, bpm: 120, bars: 1 });
+  const buf = await ctx.startRendering();
+  const ch = buf.getChannelData(0);
+  const windows = [0, 1, 2, 3].map(b => {
+    let peak = 0;
+    const from = Math.floor((b * 0.5 + 0.05) * 48000);
+    for (let i = from; i < from + 2400; i++) {
+      const v = Math.abs(ch[i]);
+      if (v > peak) peak = v;
+    }
+    return peak;
+  });
+  return windows.every(v => v > 0.05);
+});
+check('trimTakeToPunch overlaps, edges and misses', () => {
+  const a = trimTakeToPunch({ startTicks: 960, lengthTicks: 1920, punchIn: 0, punchOut: 1440 });
+  const open = trimTakeToPunch({ startTicks: 960, lengthTicks: 480, punchIn: null, punchOut: null });
+  const miss = trimTakeToPunch({ startTicks: 0, lengthTicks: 480, punchIn: 960, punchOut: 1920 });
+  const touch = trimTakeToPunch({ startTicks: 0, lengthTicks: 960, punchIn: 960, punchOut: 1920 });
+  return a.startTicks === 960 && a.offsetTicks === 0 && a.lengthTicks === 480
+    && open.startTicks === 960 && open.offsetTicks === 0 && open.lengthTicks === 480
+    && miss === null && touch === null;
+});
+check('isPunchOutReached gates on recording + armed + position', () => {
+  const base = { recording: true, punchOn: true, punchOut: 100, posTicks: 100 };
+  return isPunchOutReached(base) === true
+    && isPunchOutReached({ ...base, posTicks: 99 }) === false
+    && isPunchOutReached({ ...base, recording: false }) === false
+    && isPunchOutReached({ ...base, punchOn: false }) === false
+    && isPunchOutReached({ ...base, punchOut: null }) === false;
+});
+check('punch controls render and capture transport ticks', async () => {
+  const el = document.createElement('div');
+  container.appendChild(el);
+  const ctx = new AudioContext();
+  let pos = 480;
+  const ui = createInputUI({
+    container: el, ctx, destination: ctx.destination,
+    take: {
+      engine: { activeTrackId: 't', bpm: 120, ppq: 480, getTracks: () => [{ id: 't', clips: [] }], addClip: () => ({}) },
+      history: createHistory(), transport: { getState: () => ({ loopPosTicks: pos }) },
+      store: createAssetStore({ dbName: 'sid-synth-assets-punch-test' }),
+      getAssets: () => [], setAssets: () => {},
+    },
+  });
+  const punch = el.querySelector('#inpPunch');
+  const pin = el.querySelector('#inpPunchIn');
+  const pout = el.querySelector('#inpPunchOut');
+  if (!punch || !pin || !pout) {
+    ui.dispose();
+    el.remove();
+    try { await ctx.close(); } catch (e) {}
+    return false;
+  }
+  punch.click();
+  pin.click();
+  pos = 1440;
+  pout.click();
+  const state = ui.getPunch();
+  const ok = state.on && state.inTicks === 480 && state.outTicks === 1440
+    && punch.classList.contains('on');
+  punch.click();
+  const off = !ui.getPunch().on;
+  ui.dispose();
+  el.remove();
+  try { await ctx.close(); } catch (e) {}
+  return ok && off;
+});
+check('punch trims the placed take clip', async () => {
+  const el = document.createElement('div');
+  container.appendChild(el);
+  const ctx = new AudioContext();
+  const store = createAssetStore({ dbName: 'sid-synth-assets-punch-test' });
+  await store.open();
+  await store.clear();
+  let manifest = [];
+  const placed = [];
+  const engine = {
+    activeTrackId: 'trk_a', bpm: 120, ppq: 480,
+    getTracks: () => [{ id: 'trk_a', clips: [] }],
+    addClip: (id, cfg) => { placed.push(cfg); return { id: 'clip_punch', ...cfg }; },
+  };
+  const ui = createInputUI({
+    container: el, ctx, destination: ctx.destination,
+    take: {
+      engine, history: createHistory(), transport: { getState: () => ({ loopPosTicks: posTicks }) },
+      store, getAssets: () => manifest, setAssets: (a) => { manifest = a; },
+    },
+  });
+  let posTicks = 0;
+  const devs = await ui.refreshDevices();
+  let ok = false;
+  if (devs.length && (await ui.selectDevice(devs[0].deviceId))) {
+    // Punch region [0, 480], then rewind the static playhead to 0 so the
+    // take starts inside the region without tripping auto-stop.
+    el.querySelector('#inpPunchIn').click();
+    posTicks = 480;
+    el.querySelector('#inpPunchOut').click();
+    el.querySelector('#inpPunch').click();
+    posTicks = 0;
+    // Record ~0.9s, expect a trimmed 480-tick clip at 0.
+    el.querySelector('#inpRec').click();
+    let waited = 0;
+    while (!ui.isRecording() && waited < 3000) {
+      await new Promise(res => setTimeout(res, 100));
+      waited += 100;
+    }
+    let signaled = 0;
+    while (ui.getTakeDuration() < 0.05 && signaled < 3000) {
+      await new Promise(res => setTimeout(res, 100));
+      signaled += 100;
+    }
+    await new Promise(res => setTimeout(res, 900));
+    el.querySelector('#inpRec').click();
+    await new Promise(res => setTimeout(res, 1200));
+    ok = placed.length === 1 && placed[0].start === 0 && placed[0].length === 480;
+  }
+  ui.dispose();
+  el.remove();
+  try { await ctx.close(); } catch (e) {}
+  store.close();
+  await new Promise(resolve => {
+    const req = indexedDB.deleteDatabase('sid-synth-assets-punch-test');
+    req.onsuccess = () => resolve();
+    req.onerror = () => resolve();
+    req.onblocked = () => resolve();
+  });
   return ok;
 });
 
