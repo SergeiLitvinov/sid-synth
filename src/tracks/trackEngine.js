@@ -1,3 +1,6 @@
+import { createClipSelection } from './clipSelection.js';
+import { createLiveInput } from './liveInput.js';
+import { editStepEvent } from '../project/stepEditing.js';
 import { TrackVoices } from './voiceEngine.js';
 import { defaultInsertParams } from './inserts.js';
 import {
@@ -16,7 +19,7 @@ function defaultClip(cfg = {}) {
     color: cfg.color || null,
     start: cfg.start === undefined ? 0 : cfg.start,
     length: cfg.length === undefined ? 1920 : cfg.length,
-    events: Array.isArray(cfg.events) ? cfg.events.slice() : [],
+    events: Array.isArray(cfg.events) ? cfg.events.map(ev => ({ ...ev })) : [],
     // Audio reference (M4): { hash, offset, gain, fadeIn, fadeOut } or null.
     // A clip with audio plays the asset at clip.start; MIDI events and audio
     // coexist on one clip (layered), the piano roll only edits the events.
@@ -47,7 +50,7 @@ export function defaultTrackConfig(cfg = {}) {
     midiChannel: typeof cfg.midiChannel === 'number' ? cfg.midiChannel : null,
     grid: Array.isArray(cfg.grid) ? cfg.grid.slice() : Array(STEPS_PER_LOOP).fill(null),
     rt: Array.isArray(cfg.rt) ? cfg.rt.map(n => ({ ...n })) : [],
-    clips: Array.isArray(cfg.clips) ? cfg.clips.map(c => ({ ...c })) : [],
+    clips: Array.isArray(cfg.clips) ? cfg.clips.map(defaultClip) : [],
     inserts: Array.isArray(cfg.inserts)
       ? cfg.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } }))
       : [],
@@ -67,6 +70,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     ctx,
     bpm: config.bpm || 120,
     ppq: config.ppq || 480,
+    playbackMode: config.playbackMode === 'song' ? 'song' : 'pattern',
     tracks: [],
     byId: {},
     onTick: config.onTick || null,
@@ -97,10 +101,24 @@ export function createTrackEngine(ctx, dest, config = {}) {
   engine.loopDur = engine.stepDur * STEPS_PER_LOOP;
 
   engine._idCount = 0;
+  const clipSelection = createClipSelection({ getTrack: id => engine.byId[id], ppq: engine.ppq, onChange: () => _emitState() });
+  engine.getStepClip = clipSelection.getClip;
+  engine.getStepGrid = clipSelection.getGrid;
+  engine.selectStepClip = clipSelection.select;
 
   engine.recalcTempo = () => {
     engine.stepDur = 60 / engine.bpm / NOTE_BEATS;
     engine.loopDur = engine.stepDur * STEPS_PER_LOOP;
+  };
+
+  engine.setPlaybackMode = (mode) => {
+    if (!['song', 'pattern'].includes(mode) || mode === engine.playbackMode) return;
+    if (engine._playing) engine.stop();
+    engine.playbackMode = mode;
+    if (mode === 'song') engine.tracks.forEach(t => {
+      if (!t.clips.length && (t.grid.some(Boolean) || t.rt.length)) engine.addClip(t.id, { start: 0 });
+    });
+    _emitState();
   };
 
   // ---- MIDI clips -----------------------------------------------------
@@ -108,24 +126,34 @@ export function createTrackEngine(ctx, dest, config = {}) {
   // Grid cells + realtime notes are mirrored into its `events` (PPQ ticks), and
   // a clip-first document (events inside the clip, empty grid/rt) is expanded
   // back into grid/rt so the step scheduler plays unchanged.
+  const loopMirrors = new WeakMap();
+  const mirrorKey = t => JSON.stringify([t.grid, (t.rt || []).map(({ note, start, dur, velocity }) => ({ note, start, dur, velocity }))]);
   function syncLoopClip(t) {
     if (!t.clips || !t.clips.length) return;
-    const loop = t.clips.find(c => c.start === 0) || t.clips[0];
+    const loop = t.clips.find(c => c.start === 0);
+    if (!loop) return;
+    const key = mirrorKey(t);
+    if (loopMirrors.get(t) === key) return;
     loop.events = mergeClipEvents(
       gridToClipEvents(t.grid, { ppq: engine.ppq }),
       rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq }),
     );
+    loopMirrors.set(t, key);
   }
 
   // ---- track management ------------------------------------------------
   engine.addTrack = (cfg = {}) => {
     let id = cfg.id;
+    if (id && engine.byId[id]) throw new Error('Duplicate track id: ' + id);
     if (id) {
       engine._idCount = Math.max(engine._idCount, parseInt(String(id).replace(/\D/g, ''), 10) || 0);
     } else {
       id = 'trk_' + (++engine._idCount);
     }
     const t = defaultTrackConfig({ ...cfg, id });
+    if (engine.playbackMode === 'song' && !t.clips.length && (t.grid.some(Boolean) || t.rt.length)) {
+      t.clips.push(defaultClip({ start: 0, events: mergeClipEvents(gridToClipEvents(t.grid, { ppq: engine.ppq }), rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq })) }));
+    }
     const loopClip = (t.clips || []).find(c => c.start === 0);
     if (loopClip && (loopClip.events || []).length) {
       const hasGrid = (t.grid || []).some(c => !!c);
@@ -133,6 +161,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
         t.grid = clipEventsToGrid(loopClip.events, { ppq: engine.ppq });
         t.rt = clipEventsToRt(loopClip.events, { bpm: engine.bpm, ppq: engine.ppq });
       }
+      loopMirrors.set(t, mirrorKey(t));
     }
     t.voice = new TrackVoices(engine.ctx, t, dest);
     syncLoopClip(t);
@@ -149,7 +178,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const i = engine.tracks.indexOf(t);
     if (i >= 0) engine.tracks.splice(i, 1);
     delete engine.byId[id];
+    clipSelection.forget(id);
     engine._armed.delete(id);
+    if (engine.activeTrackId === id) engine.activeTrackId = engine.tracks[0]?.id || null;
+    _applyAudibility();
     try { t.voice.dispose(); } catch (e) {}
     _emitState();
   };
@@ -176,12 +208,17 @@ export function createTrackEngine(ctx, dest, config = {}) {
     Object.keys(patch).forEach(k => {
       if (k === 'adsr') t.adsr = { ...t.adsr, ...patch.adsr };
       else if (k === 'rt') t.rt = Array.isArray(patch.rt) ? patch.rt.map(n => ({ ...n })) : t.rt;
-      else if (k === 'clips') t.clips = Array.isArray(patch.clips) ? patch.clips.map(c => ({ ...c })) : t.clips;
+      else if (k === 'clips') t.clips = Array.isArray(patch.clips) ? patch.clips.map(defaultClip) : t.clips;
       else if (k === 'inserts') t.inserts = Array.isArray(patch.inserts)
         ? patch.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } }))
         : (t.inserts || []);
       else t[k] = patch[k];
     });
+    if ('clips' in patch) {
+      const loop = t.clips.find(c => c.start === 0);
+      if (loop) t.grid = clipEventsToGrid(loop.events || [], { ppq: engine.ppq });
+      loopMirrors.set(t, mirrorKey(t));
+    } else if ('grid' in patch || 'rt' in patch) syncLoopClip(t);
     _applyAudibility();
     if ('inserts' in patch && t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
     _emitState();
@@ -258,7 +295,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!t) return null;
     const clip = defaultClip(cfg);
     t.clips.push(clip);
-    syncLoopClip(t);
+    if (clip.start === 0 && clip.events.length) {
+      t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
+      t.rt = [];
+      loopMirrors.set(t, mirrorKey(t));
+    } else syncLoopClip(t);
     _emitState();
     return clip;
   };
@@ -268,6 +309,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!t) return false;
     const i = t.clips.findIndex(c => c.id === clipId);
     if (i < 0) return false;
+    if (t.clips[i].start === 0) {
+      t.grid = Array(STEPS_PER_LOOP).fill(null);
+      t.rt = [];
+      loopMirrors.delete(t);
+    }
     t.clips.splice(i, 1);
     _emitState();
     return true;
@@ -284,22 +330,18 @@ export function createTrackEngine(ctx, dest, config = {}) {
     return true;
   };
 
-  // Replace a clip's note events (backlog #25, piano roll). Events are PPQ ticks
-  // relative to the clip start. For the loop clip (start 0) the events also feed
-  // the step grid / realtime scheduler, so they are re-quantized into `grid`
-  // (16-step) — the loop is inherently one bar of sixteenths, so this keeps the
-  // drawn notes lossless; realtime `rt` notes are folded into the grid. Editing
-  // an arranged (non-loop) clip never touches grid/rt — the linear scheduler
-  // plays its events directly.
+  // Clip events retain full timing/polyphony. The legacy zero-clip grid is
+  // only a compatibility projection; editor selection has its own projection.
   engine.setClipEvents = (id, clipId, events) => {
     const t = engine.byId[id];
     const clip = t && t.clips.find(c => c.id === clipId);
     if (!clip) return false;
     clip.events = (events || []).map(ev => ({ ...ev })).sort((a, b) => (a.start || 0) - (b.start || 0));
-    const loop = t.clips.find(c => c.start === 0) || t.clips[0];
+    const loop = t.clips.find(c => c.start === 0);
     if (clip === loop) {
       t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
       t.rt = [];
+      loopMirrors.set(t, mirrorKey(t));
     }
     _emitState();
     return true;
@@ -341,6 +383,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       start: cut,
       length: clip.start + clip.length - cut,
       events: rightEvents,
+      audio: clip.audio ? { ...clip.audio, offset: (clip.audio.offset || 0) + splitOffset / ticksPerSecond(engine.bpm, engine.ppq) } : null,
     });
     clip.length = splitOffset;
     clip.events = leftEvents;
@@ -362,6 +405,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       start: clip.start + clip.length,
       length: clip.length,
       events: clip.events,
+      audio: clip.audio,
     });
     t.clips.push(copy);
     syncLoopClip(t);
@@ -385,6 +429,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
         start: clip.start + i * clip.length,
         length: clip.length,
         events: clip.events,
+        audio: clip.audio,
       });
       t.clips.push(copy);
       copies.push(copy);
@@ -406,7 +451,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
   engine.isArmed = (id) => engine._armed.has(id);
 
   engine.getTracks = () => engine.tracks.map(t => {
-    syncLoopClip(t);
     return {
       id: t.id, name: t.name, color: t.color, enabled: t.enabled, monitor: t.monitor, height: t.height || null,
       muted: t.muted, solo: t.solo, folder: t.folder || null, collapsed: !!t.collapsed,
@@ -414,7 +458,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       adsr: { ...t.adsr }, volume: t.volume, gridNote: t.gridNote, gridDur: t.gridDur,
       midiChannel: typeof t.midiChannel === 'number' ? t.midiChannel : null,
       grid: t.grid.map(c => normalizeCell(c)), rt: t.rt.map(n => ({ ...n })),
-      clips: t.clips.map(c => ({ ...c, events: (c.events || []).slice() })),
+      clips: t.clips.map(c => ({ ...c, audio: c.audio ? { ...c.audio } : null, events: (c.events || []).map(ev => ({ ...ev })) })),
       inserts: t.inserts.map(i => ({ id: i.id, type: i.type, params: { ...(i.params || {}) } })),
     };
   });
@@ -430,6 +474,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
   });
 
   engine.getState = () => ({
+    playbackMode: engine.playbackMode,
     playing: engine._playing,
     recording: engine._recording,
     bpm: engine.bpm,
@@ -454,7 +499,16 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   engine.toggleGridStep = (id, step, note, dur) => {
     const t = engine.byId[id];
-    if (!t) return false;
+    if (!t || !Number.isInteger(step) || step < 0 || step >= STEPS_PER_LOOP) return false;
+    let clip = engine.getStepClip(id);
+    if (!clip && engine.playbackMode === 'song') clip = engine.addClip(id, { start: 0 });
+    if (clip) {
+      const was = !!engine.getStepGrid(id)[step];
+      engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, {
+        note: note || t.gridNote, dur: dur || t.gridDur,
+      }, { ppq: engine.ppq, remove: was }));
+      return was ? false : engine.getStepGrid(id)[step];
+    }
     const was = t.grid[step];
     if (was) { t.grid[step] = null; syncLoopClip(t); return false; }
     t.grid[step] = { note: note || t.gridNote || 'C4', dur: dur || t.gridDur || 1 };
@@ -465,7 +519,14 @@ export function createTrackEngine(ctx, dest, config = {}) {
   // Change the pitch and/or duration of an existing grid step.
   engine.setGridStep = (id, step, patch) => {
     const t = engine.byId[id];
-    if (!t) return null;
+    if (!t || !Number.isInteger(step) || step < 0 || step >= STEPS_PER_LOOP) return null;
+    let clip = engine.getStepClip(id);
+    if (!clip && engine.playbackMode === 'song') clip = engine.addClip(id, { start: 0 });
+    if (clip) {
+      const values = engine.getStepGrid(id)[step] ? patch : { note: t.gridNote, dur: t.gridDur, ...patch };
+      engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, values, { ppq: engine.ppq }));
+      return engine.getStepGrid(id)[step];
+    }
     const cur = normalizeCell(t.grid[step]) || { note: t.gridNote || 'C4', dur: t.gridDur || 1 };
     if (patch.note) cur.note = patch.note;
     if (typeof patch.dur === 'number' && patch.dur > 0) cur.dur = patch.dur;
@@ -487,6 +548,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   engine.clearTrack = (id) => {
     const t = engine.byId[id];
+    const clip = engine.getStepClip(id);
+    if (clip) { engine.setClipEvents(id, clip.id, []); return; }
     if (t) { t.grid = Array(STEPS_PER_LOOP).fill(null); t.rt = []; syncLoopClip(t); _emitState(); }
   };
 
@@ -513,7 +576,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
   // claims every started clip itself.
   engine._markPastLinear = (absTick) => {
     engine.tracks.forEach(t => {
-      const loopClip = (t.clips || []).find(c => c.start === 0);
+      const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
       (t.clips || []).forEach(clip => {
         if (clip === loopClip) return;
         (clip.events || []).forEach(ev => {
@@ -543,7 +606,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const loopLenTicks = STEPS_PER_LOOP * (engine.ppq / 4);
     engine.tracks.forEach(t => {
       if (engine.byId[t.id].enabled === false) return;
-      const loopClip = (t.clips || []).find(c => c.start === 0);
+      const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
       // Loop clip: check events against loop-relative position (ticks)
       if (loopClip) {
         const loopPosTicks = absTick % loopLenTicks;
@@ -564,11 +627,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
           const evStart = typeof ev.start === 'number' ? ev.start : 0;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
           const absStart = clip.start + evStart;
-          const absEnd = absStart + evDur;
+          const absEnd = Math.min(absStart + evDur, clip.start + clip.length);
           if (absStart <= absTick && absEnd > absTick) {
             const remainingTicks = absEnd - absTick;
             const durSec = remainingTicks / tps;
             t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
+            ev._scheduledLin = true;
           }
         });
       });
@@ -618,7 +682,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._timer = setInterval(_tick, 25);
   };
 
-  engine.record = () => {
+  engine.prepareRecording = () => {
     if (!engine._armed.size && engine.activeTrackId) engine.armTrack(engine.activeTrackId, true);
     if (engine.recordMode === 'replace') {
       const ids = engine._armed.size ? [...engine._armed] : (engine.activeTrackId ? [engine.activeTrackId] : []);
@@ -628,6 +692,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._recBuffer.clear();
     engine.tracks.forEach(t => t.rt.forEach(ev => delete ev._open));
     _emitState();
+  };
+
+  engine.record = () => {
+    engine.prepareRecording();
     if (!engine._playing) engine.play();
   };
 
@@ -655,47 +723,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
   // Any note-on while the transport runs in record mode is stamped into the
   // armed tracks' realtime buffer; the same note is always monitored through
   // the track voices so the player hears what will be recorded.
-  engine.noteOn = (note) => {
-    _resumeIfNeeded();
-    const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
-    const noteName = resolve(note);
-    const now = engine.ctx.currentTime;
-    if (!engine._armed.size) {
-      const target = engine.activeTrackId || (engine.tracks[0] && engine.tracks[0].id);
-      if (target && engine.byId[target]) {
-        const t = engine.byId[target];
-        if (t.monitor) t.voice.noteOn(noteName, now);
-      }
-      _emitNote(noteName);
-      return;
-    }
-    engine._armed.forEach(id => {
-      const t = engine.byId[id];
-      if (!t) return;
-      t.voice.noteOn(noteName, now);
-      if (engine._recording) _stampOn(t, noteName);
-    });
-    _emitNote(noteName);
-  };
+  const liveInput = createLiveInput(engine, {
+    stampOn: _stampOn, stampOff: _stampOff, emitNote: _emitNote,
+  });
+  engine.noteOn = liveInput.noteOn;
+  engine.noteOff = liveInput.noteOff;
 
-  engine.noteOff = (note) => {
-    _resumeIfNeeded();
-    const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
-    const noteName = resolve(note);
-    const now = engine.ctx.currentTime;
-    const targets = engine._armed.size
-      ? [...engine._armed].map(id => engine.byId[id]).filter(Boolean)
-      : (() => {
-          const id = engine.activeTrackId || (engine.tracks[0] && engine.tracks[0].id);
-          return id && engine.byId[id] ? [engine.byId[id]] : [];
-        })();
-    targets.forEach(t => {
-      t.voice.noteOff(noteName, now);
-      if (engine._recording) _stampOff(t, noteName);
-    });
-  };
-
-  // ---- CC / pitch bend routing (backlog #174) ----------------------------
   // Route MIDI CC to matching tracks (by midiChannel).
   engine.routeCC = (channel, cc, value) => {
     const tracks = engine.tracks;
@@ -704,7 +737,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     matching.forEach(t => {
       if (cc === 1) t.voice.modulation(norm);           // CC1: modulation → filter
       else if (cc === 64) t.voice.sustain(norm >= 0.5); // CC64: sustain pedal
-      else if (cc === 7) t.voice.setGain(norm);         // CC7: volume → fader
+      else if (cc === 7) { t.volume = norm; _applyAudibility(); }         // CC7: volume → fader
     });
   };
 
@@ -748,10 +781,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
   }
 
-  function _stampOn(t, noteName) {
+  function _stampOn(t, noteName, velocity = 100) {
     const buf = engine._recBuffer.get(t.id) || [];
     const start = _withinLoop();
-    buf.push({ note: noteName, start: Math.max(0, start), dur: null });
+    buf.push({ note: noteName, start: Math.max(0, start), dur: null, velocity });
     engine._recBuffer.set(t.id, buf);
   }
 
@@ -776,12 +809,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
       if (!t) return;
       const committed = buf
         .filter(e => e.dur !== null)
-        .map(e => ({ note: e.note, start: e.start, dur: e.dur }));
+        .map(e => ({ note: e.note, start: e.start, dur: e.dur, velocity: e.velocity }));
       buf.forEach(e => {
         if (e.dur === null) {
           let dur = engine.loopDur - e.start;
           if (finalizeHold && dur < 0.03 && e.start > 0) dur = 0.03;
-          if (dur > 0) committed.push({ note: e.note, start: e.start, dur });
+          if (dur > 0) committed.push({ note: e.note, start: e.start, dur, velocity: e.velocity });
         }
       });
       if (committed.length) {
@@ -794,20 +827,38 @@ export function createTrackEngine(ctx, dest, config = {}) {
             return { ...e, start: qd / tps };
           });
         }
-        t.rt = out;
+        let clip = t.clips.find(c => c.start === 0);
+        if (!clip) {
+          // First take on a clipless track: fold any legacy grid/rt backing
+          // into the new loop clip so overdub keeps playing it.
+          clip = engine.addClip(t.id, { start: 0 });
+          if (clip) {
+            clip.events = mergeClipEvents(
+              gridToClipEvents(t.grid, { ppq: engine.ppq }),
+              rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq }),
+            );
+          }
+        }
+        if (clip) {
+          clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
+          loopMirrors.set(t, mirrorKey(t));
+        }
       }
     });
     engine._recBuffer.clear();
     engine.tracks.forEach(syncLoopClip);
-    if (engine._playing) {
-      engine.tracks.forEach(t => t.rt.forEach(ev => { ev._nextAbs = engine._playStartCtx + (engine._loopCount * engine.loopDur) + ev.start; }));
-    }
   }
 
-  // Clear a track's loop clip (grid + realtime notes) so a REPLACE-mode record
-  // starts from an empty clip. Backlog #41.
+  // Clear the loop (start-0) clip so a REPLACE-mode record starts empty —
+  // the same clip _commitBuffer writes the take into. Falls back to the
+  // legacy backing only when the track has no clips.
   function _clearLoopClip(t) {
     if (!t) return;
+    const clip = (t.clips || []).find(c => c.start === 0);
+    if (clip) {
+      engine.setClipEvents(t.id, clip.id, []);
+      return;
+    }
     t.grid = t.grid.map(() => null);
     t.rt = [];
     syncLoopClip(t);
@@ -863,6 +914,19 @@ export function createTrackEngine(ctx, dest, config = {}) {
     while (gridLoopAbs + engine._cursor * engine.stepDur < endAbs) {
       const timeAbs = gridLoopAbs + engine._cursor * engine.stepDur;
       engine.tracks.forEach(t => {
+        if (engine.playbackMode === 'song') return;
+        const loopClip = t.clips.find(c => c.start === 0);
+        if (loopClip) {
+          const step = engine.ppq / 4;
+          const tps = ticksPerSecond(engine.bpm, engine.ppq);
+          loopClip.events.forEach(ev => {
+            if (ev.start >= engine._cursor * step && ev.start < (engine._cursor + 1) * step && ev.start < loopClip.length) {
+              const duration = Math.min(ev.dur, loopClip.length - ev.start) / tps;
+              if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + ev.start / tps, duration, ev.velocity);
+            }
+          });
+          return;
+        }
         const cell = normalizeCell(t.grid[engine._cursor]);
         if (cell) scheduleNoteOn(t, cell.note, timeAbs, engine.stepDur * Math.max(1, cell.dur) - 0.01, cell.vel);
       });
@@ -877,6 +941,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
     // --- realtime notes (per-event next occurrence pointer) ---
     engine.tracks.forEach(t => {
+      if (engine.playbackMode === 'song' || t.clips.some(c => c.start === 0)) return;
       t.rt.forEach(ev => {
         if (typeof ev._nextAbs !== 'number') ev._nextAbs = engine._playStartCtx + ev.start;
       });
@@ -909,7 +974,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     // scheduling into the past, which the Web Audio clock plays immediately.
     const tps = ticksPerSecond(engine.bpm, engine.ppq);
     engine.tracks.forEach(t => {
-      const loopClip = (t.clips || []).find(c => c.start === 0);
+      const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
       (t.clips || []).forEach(clip => {
         if (clip === loopClip) return;
         (clip.events || []).forEach(ev => {
@@ -918,7 +983,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
           const absSec = absTicks / tps;
           if (absSec > elapsed + 0.12) return;
           const timeAbs = engine._playStartCtx + absSec;
-          const durTicks = typeof ev.dur === 'number' ? ev.dur : 0;
+          const durTicks = Math.min(typeof ev.dur === 'number' ? ev.dur : 0, clip.length - ev.start);
+          if (ev.start >= clip.length || (engine.playbackMode === 'song' && (durTicks <= 0 || absSec + durTicks / tps <= elapsed))) {
+            ev._scheduledLin = true;
+            return;
+          }
           if (durTicks > 0) scheduleNoteOn(t, ev.note, timeAbs, durTicks / tps, ev.velocity);
           else scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
           ev._scheduledLin = true;
@@ -969,6 +1038,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   engine.dispose = () => {
     engine.stopTimer();
+    engine._stopAudio();
+    liveInput.clear();
     engine._recording = false;
     engine._playing = false;
     engine.tracks.forEach(t => { try { t.voice.dispose(); } catch (e) {} });

@@ -143,7 +143,7 @@ check('grid steps advance monotonically across ticks', () => {
   return unique.length >= 1 && unique.every((t, i, arr) => i === 0 || t > arr[i - 1]);
 });
 
-check('record captures noteOn/noteOff as a realtime segment', () => {
+check('record captures noteOn/noteOff as clip events', () => {
   const d = makeFixture(120);
   d.record();
   d.advanceAndTick(1000); // loopPos ~1.0s
@@ -151,9 +151,10 @@ check('record captures noteOn/noteOff as a realtime segment', () => {
   d.advanceAndTick(500);  // loopPos ~1.5s
   d.engine.noteOff('C4');
   d.engine.stop();
-  const rt = d.track.rt;
-  return rt.length === 1 && rt[0].note === 'C4'
-    && Math.abs(rt[0].start - 1.0) < 0.02 && Math.abs(rt[0].dur - 0.5) < 0.02;
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  const ev = loop.events[0];
+  return ev.note === 'C4' && Math.abs(ev.start - 960) < 20 && Math.abs(ev.dur - 480) < 20;
 });
 
 check('recording auto-arms the active track', () => {
@@ -168,9 +169,10 @@ check('held note commits at stop with dur to loop end', () => {
   d.advanceAndTick(1000);
   d.engine.noteOn('C4');
   d.engine.stop(); // never released
-  const rt = d.track.rt;
-  return rt.length === 1 && rt[0].note === 'C4' && Math.abs(rt[0].start - 1.0) < 0.02
-    && Math.abs(rt[0].dur - 1.0) < 0.05;
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  const ev = loop.events[0];
+  return ev.note === 'C4' && Math.abs(ev.start - 960) < 20 && Math.abs(ev.dur - 960) < 50;
 });
 
 check('playback triggers recorded rt notes at their loop time', () => {
@@ -211,16 +213,17 @@ check('updateTrack mutates wave/filter/adsr config', () => {
   return t.wave === 'sawtooth' && t.filterType === 'lowpass' && t.filterFreq === 800 && t.adsr.a === 0.02;
 });
 
-check('clearTrack empties grid and rt', () => {
+check('clearTrack empties the loop clip', () => {
   const d = makeFixture(120);
   d.engine.toggleGridStep('trk_a', 0, 'C4');
   d.record();
   d.advanceAndTick(500);
   d.engine.noteOn('C4');
   d.engine.stop();
-  if (!d.track.rt.length) return false;
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || !loop.events.length) return false;
   d.engine.clearTrack('trk_a');
-  return d.track.grid.every(s => s === null) && d.track.rt.length === 0;
+  return loop.events.length === 0;
 });
 
 check('removeTrack disposes voice and removes id', () => {
@@ -787,8 +790,9 @@ check('REPLACE mode clears the loop clip before recording', () => {
   d.advanceAndTick(400);
   d.engine.noteOff('E4');
   d.engine.stop();
+  const loop = d.track.clips.find(c => c.start === 0);
   return d.track.grid.every(c => c === null)
-    && d.track.rt.length === 1 && d.track.rt[0].note === 'E4';
+    && !!loop && loop.events.length === 1 && loop.events[0].note === 'E4';
 });
 
 check('OVERDUB mode keeps existing clip notes while recording new ones', () => {
@@ -800,8 +804,8 @@ check('OVERDUB mode keeps existing clip notes while recording new ones', () => {
   d.advanceAndTick(400);
   d.engine.noteOff('E4');
   d.engine.stop();
-  return d.track.grid[0] && d.track.grid[0].note === 'C4'
-    && d.track.rt.length === 1 && d.track.rt[0].note === 'E4';
+  const loop = d.track.clips.find(c => c.start === 0);
+  return !!loop && loop.events.some(e => e.note === 'C4') && loop.events.some(e => e.note === 'E4');
 });
 
 check('record quantize snaps captured notes to the grid', () => {
@@ -813,8 +817,9 @@ check('record quantize snaps captured notes to the grid', () => {
   d.advanceAndTick(200);
   d.engine.noteOff('C4');
   d.engine.stop();
-  const rt = d.track.rt;
-  return rt.length === 1 && Math.abs(rt[0].start - 1.0) < 0.02;
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  return Math.abs(loop.events[0].start - 960) < 20;
 });
 
 check('auditionNoteOff releases the auditioned note', () => {

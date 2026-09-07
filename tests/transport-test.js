@@ -216,14 +216,15 @@ check('adapter: engine.stepDur recalculates from transport bpm', () => {
   f.engine.setBpm(60);
   return near(f.engine.stepDur, 0.25) && near(f.engine.loopDur, 4.0);
 });
-check('adapter: record arms and captures realtime notes', () => {
+check('adapter: record arms and captures notes into the loop clip', () => {
   const f = makeAdapterFixture(120);
   f.record();
   f.engine.noteOn('C2');
   f.advanceAndTick(200);
   f.engine.noteOff('C2');
   f.stop();
-  return f.track.rt.length === 1 && f.track.rt[0].note === 'C2' && f.track.rt[0].dur > 0.03;
+  const loop = f.track.clips.find(c => c.start === 0);
+  return !!loop && loop.events.length === 1 && loop.events[0].note === 'C2' && loop.events[0].dur > 29;
 });
 check('adapter: engine.stop commits buffer and resets', () => {
   const f = makeAdapterFixture(120);
@@ -232,7 +233,8 @@ check('adapter: engine.stop commits buffer and resets', () => {
   f.advanceAndTick(100);
   f.stop();
   const s = f.engine.getState();
-  return s.playing === false && s.recording === false && f.track.rt.length === 1;
+  const loop = f.track.clips.find(c => c.start === 0);
+  return s.playing === false && s.recording === false && !!loop && loop.events.length === 1;
 });
 check('adapter: onStop silences voices', () => {
   const f = makeAdapterFixture(120);
