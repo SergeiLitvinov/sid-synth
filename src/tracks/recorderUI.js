@@ -59,6 +59,34 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   const recUndo = el.querySelector('#recUndo');
   const recRedo = el.querySelector('#recRedo');
   const recMidiDevice = el.querySelector('#recMidiDevice');
+  const modeLabel = document.createElement('label');
+  modeLabel.className = 'rec-bpm';
+  modeLabel.textContent = 'PLAYBACK ';
+  const playbackSelect = document.createElement('select');
+  playbackSelect.id = 'recPlaybackMode';
+  playbackSelect.setAttribute('aria-label', 'Playback mode');
+  playbackSelect.title = 'SONG: play each clip once. PATTERN: repeat the first bar at zero. Switching stops playback.';
+  for (const [value, label] of [['song', 'SONG'], ['pattern', 'PATTERN']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    playbackSelect.append(option);
+  }
+  modeLabel.append(playbackSelect);
+  el.querySelector('.rec-transport').append(modeLabel);
+  playbackSelect.addEventListener('change', () => {
+    const before = engine.playbackMode;
+    const after = playbackSelect.value;
+    const snapshots = engine.getTracks();
+    runCommand({
+      label: 'Change playback mode',
+      apply: () => engine.setPlaybackMode(after),
+      undo: () => {
+        engine.setPlaybackMode(before);
+        snapshots.forEach(t => engine.updateTrack(t.id, { clips: t.clips }));
+      },
+    });
+  });
 
   // Populate MIDI device selector and sync selection with midiApi.
   function syncMidiDevices() {
@@ -75,6 +103,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
     });
   }
   if (midiApi) syncMidiDevices();
+  const unsubscribeMidi = midiApi?.subscribe?.(syncMidiDevices);
   if (recMidiDevice) {
     recMidiDevice.addEventListener('change', () => {
       if (midiApi) midiApi.selectDevice(recMidiDevice.value || null);
@@ -247,7 +276,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
 
       // If a step is selected, the inputs edit that step's note/duration;
       // otherwise they edit the track defaults for newly-toggled steps.
-      const selectedCell = sel && sel.id === t.id ? t.grid[sel.step] : null;
+      const selectedCell = sel && sel.id === t.id ? engine.getStepGrid(t.id)[sel.step] : null;
       const isEditingStep = !!selectedCell;
 
       const noteIn = document.createElement('input');
@@ -300,6 +329,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
       });
 
       const clear = mkBtn('CLR', '', () => { runCommand(clearTrackCommand(engine, t.id)); renderAll(); });
+      clear.title = 'Clear MIDI notes in the step editor clip; keep other clips and audio';
       const del = mkBtn('DEL', '', () => { runCommand(removeTrackCommand(engine, t.id)); renderAll(); });
 
       // Insert devices (backlog #32): the INS button expands/collapses the
@@ -496,8 +526,28 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
       label.textContent = t.name;
       label.style.color = t.color;
       row.appendChild(label);
+      if (engine.selectStepClip && t.clips.length) {
+        const picker = document.createElement('select');
+        picker.className = 'rec-clip-select';
+        picker.setAttribute('aria-label', 'Step editor clip for ' + t.name);
+        picker.title = 'Edit the first 16 steps of this clip (recording target is unchanged)';
+        picker.style.maxWidth = '100%';
+        t.clips.forEach(clip => {
+          const option = document.createElement('option');
+          option.value = clip.id;
+          option.textContent = clip.name + ' · bar ' + (1 + clip.start / ((engine.ppq || 480) * 4)).toFixed(2).replace(/\.00$/, '');
+          picker.appendChild(option);
+        });
+        picker.value = engine.getStepClip(t.id)?.id || '';
+        picker.addEventListener('change', () => {
+          sel = null;
+          engine.selectStepClip(t.id, picker.value);
+        });
+        label.appendChild(picker);
+      }
+      const stepGrid = engine.getStepGrid(t.id);
       for (let s = 0; s < STEPS_PER_LOOP; s++) {
-        const cell = t.grid[s];
+        const cell = stepGrid[s];
         const c = document.createElement('div');
         c.className = 'rec-cell';
         if (cell) c.classList.add('on');
@@ -537,6 +587,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   }
 
   function renderAll() {
+    playbackSelect.value = engine.playbackMode || 'pattern';
     // Reflect the engine tempo in the UI unless the user is actively editing it.
     if (recBpm && document.activeElement !== recBpm) recBpm.value = engine.bpm;
     renderTracks();
@@ -547,10 +598,12 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
 
   // ---- engine callbacks ------------------------------------------------
   engine.onStateChange = (s) => {
+    playbackSelect.value = s.playbackMode || engine.playbackMode || 'pattern';
     recRecord.classList.toggle('on', s.recording);
     recPlay.classList.toggle('on', s.playing);
     // re-render track rows so ARM buttons reflect engine state (auto-arm on REC)
     renderTracks();
+    renderGrid();
     if (s.playing) renderPos();
     else recPos.textContent = '--';
   };
@@ -580,6 +633,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   return {
     el,
     renderAll,
+    dispose() { unsubscribeMidi?.(); },
     addTrack(cfg) { return engine.addTrack(cfg); },
   };
 }

@@ -1,84 +1,41 @@
-# SID Synth — Стандарты кодирования
+# SID Studio — стандарты разработки
 
-## JS / ES Modules
+## Язык и инструменты
 
-- ES Modules (`import`/`export`) по всему проекту; без глобальных переменных и `window`-полей в модулях.
-- Отступы: 2 пробела; одинарные кавычки; точка с запятой обязательна.
-- Именование:
-  - `camelCase` — переменные и функции
-  - `PascalCase` — классы и конструкторы
-  - `UPPER_SNAKE` — константы (например, `NOTES`, `PRESETS`)
-- Файл — один публичный экспорт по умолчанию (класс или фабрика), внутренние хелперы — локальные функции.
-- Без мёртвых `console.log`; `console.error` — только для реальных ошибок.
-- Комментарии — на английском, только там, где логика неочевидна. Без шумных секций.
+ES modules, 2 пробела, одинарные кавычки, точки с запятой; camelCase для функций, PascalCase для классов, UPPER_SNAKE для констант. Комментарии объясняют нетривиальную логику, а не историю номеров TODO. Приложение не требует Node/npm или сторонних runtime-зависимостей.
 
-## Структура кода
+## Ответственность модулей
 
-- `main.js` должна оставаться тонкой (цель <300 строк). Домены выносить в `src/services/*`:
-  роутер соединений, drag&drop, пресеты, MIDI, визуализация.
-- Избегать размножения `switch`-блоков: при создании аудио-нод использовать реестр/мапу
-  (см. `src/oscillator/index.js` → `create()`), а не дублировать `switch` в компонентах.
-- Баррель-файлы `index.js` в каждой папке — единая точка экспорта домена.
+main.js — composition root, ориентир до 300 строк. Домены и очередность разделения описаны в ARCHITECTURE.md. Не переносить god object целиком в универсальный service. У каждого публичного модуля понятная обязанность и небольшой контракт; не требовать искусственно одного export или barrel в каждой папке.
 
-## Компоненты (UI + audio)
+AudioComponent — база визуальных rack-компонентов; модели проекта, commands, transport и DSP не наследуются от UI. Layout, musical-time и transforms — чистые функции. Реестры типов/параметров заменяют расходящиеся switch-блоки.
 
-- Всё наследуется от `AudioComponent` (`src/components/AudioComponent.js`).
-- Контракт компонента:
-  - `inputGain` / `outputGain` (`GainNode`) — точки подключения для роутера
-  - `update()` — пересборка/применение параметров
-  - `dispose()` — полное освобождение: отписка слушателей, `disconnect()` всех нод
-  - `type` — строковый идентификатор типа
-- Параметры компонента — единственный источник правды (состояние UI читать из свойств).
+## Данные и команды
 
-## Web Audio API
+Snapshot getters не мутируют музыку. Project data не содержат DOM, AudioNode, callbacks и scheduler pointers. На границах выполняются validation/normalization. Не хранить два независимых канонических представления нот.
 
-- Каждый `connect()` симметрично уравновешен `disconnect()` (в `update()`/`dispose()`).
-- Не пересоздавать `AudioNode` ради смены значения — менять `AudioParam.value`
-  (например, `osc.frequency.value`, `filter.frequency.value`).
-- Держать ссылки на `AudioParam` (или ноду), не обращаться по строковым именам.
-- Всё, что может бросить исключение (stop, disconnect), оборачивать в `try/catch`.
-- Тайминговые события планировать через `ctx.currentTime`, а не только `setTimeout`.
-- Соблюдать баланс: Dolby нет, но умножение ведёт к клиппингу — контролировать уровни `GainNode`.
+Все пользовательские музыкальные правки должны проходить commands. Один жест — одна history transaction; copies сохраняют velocity, вложенные события, audio refs и порядок. Stable IDs не зависят от текущего индекса UI. Не обращаться из UI к private fields движка и не подменять его методы.
 
-## DOM и стили
+## Аудио и lifecycle
 
-- Элементы создавать программно (`document.createElement`), инлайн-HTML в JS запрещён.
-- Инлайн-стили в JS — только исключительные случаи; основной стиль — в `.css` через классы.
-- Слушатели, добавленные на `document`/`window`, обязательно снимать в `dispose()`,
-  иначе — утечки при удалении компонента.
-- CSS-цвета только валидные (6 hex-символов или `hsl()/rgba()`); без дублей правил.
+Планировать события по audio clock; таймер только пополняет scheduling horizon. Для scheduled нот значение AudioParam меняется на время ноты, а не сразу. Realtime/offline paths должны использовать одинаковые factories и musical-time conversions.
+
+Каждый владелец освобождает nodes, timers, observers, streams, listeners и subscriptions. После delete/seek/undo необходимо отменять scheduled события. Не пересоздавать AudioNode для простой смены параметра. Ловить ожидаемые stop/disconnect ошибки; ошибки сохранения, создания графа и импорта нельзя глотать как успех.
+
+## UI
+
+Создавать элементы через DOM API; пользовательские имена выводить через textContent. Не добавлять HTML-шаблоны в новых модулях; существующие заменить по отдельному плану. Общие стили — CSS classes/tokens, inline — вычисленная геометрия и явно динамические значения.
+
+Подписки возвращают unsubscribe. Keyboard actions учитывают focus/input/contenteditable и активный editor scope. Полный визуальный контракт описан в UI_UX.md; пока это цель рефакторинга, не факт реализации.
+
+## Проверка и документация
+
+Запуск: python tests/run-browser-tests.py либо отдельные браузерные tests/*.html на serve.py/serve-ps.ps1. Async-набор должен завершиться summary; отсутствие summary — ошибка/неполный прогон. Использовать изолированный профиль, чтобы не затронуть пользовательский проект. AudioInput tests с искусственным входом не заменяют проверку физического устройства.
+
+Выбирать тесты поведения: snapshots/undo, channel routing, scheduling times, audio samples. Не считать наличие кнопки доказательством работающей функции. Для изменения звука нужны real audio проверки в дополнение к mock. При изменении composition root добавить запуск реального приложения.
+
+Результаты фиксировать с датой, браузером и ограничениями; не размножать устаревающие счётчики в README. Выполненную задачу удалять из TODO после приёмки, а пользовательскую возможность документировать в USER_GUIDE.md. Технические исправления — в AUDIT.md, планы — в TODO.
 
 ## Git
 
-- Атомарные коммиты с префиксами: `fix:`, `feat:`, `refactor:`, `docs:`, `chore:`.
-- Не коммитить бэкапы (`*.bak`, `*.old`), временные артефакты, «обфускаторы» — они в `.gitignore`.
-- Не мешать в один коммит рефакторинг и фиксы поведения.
-
-## Проверка перед сдачей
-
-- Без внешних зависимостей и Node — проект не требует `node_modules`/npm.
-- Сервер: `.\serve.ps1` (порт 3000, через `serve.py`) или `pwsh -File tests/serve-ps.ps1` (порт 3100, только PS7) — оба без кэша.
-- Браузерные тесты: `.\serve.ps1` → `http://localhost:3000/tests/smoke.html` (10/10),
-  `http://localhost:3000/tests/mock-test.html` (11/11),
-  `http://localhost:3000/tests/track-test.html` (125/125),  `http://localhost:3000/tests/project-test.html` (43/43),
-  `http://localhost:3000/tests/history-test.html` (28/28),
-  `http://localhost:3000/tests/recorderUI-test.html` (27/27),
-  `http://localhost:3000/tests/musicalTime-test.html` (26/26),
-  `http://localhost:3000/tests/transport-test.html` (48/48),
-  `http://localhost:3000/tests/projectStore-test.html` (11/11, async debounce-тест требует Playwright/ожидания),
-  `http://localhost:3000/tests/clipEvents-test.html` (21/21),
-  `http://localhost:3000/tests/assetStore-test.html` (28/28),
-  `http://localhost:3000/tests/mediaPool-test.html` (16/16),
-  `http://localhost:3000/tests/resample-test.html` (9/9),
-  `http://localhost:3000/tests/audioEngine-test.html` (11/11),
-  `http://localhost:3000/tests/audioInput-test.html` (25/25, только с флагами `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream`),
-  `http://localhost:3000/tests/wavExport-test.html` (8/8) и
-  `http://localhost:3000/tests/arranger-test.html` (217/217) — без FAIL (итого 674/674).
-- E2E: `tests/integration.js` (249 шагов: r30 — drum editor, r31 — media pool DOM, r32 — audio clip UI, r33 — input DOM, r34 — REC DOM, r35 — punch/count-in DOM; полный прогон требует Node/MCP-браузер, ключевые flow проверены headless через Python Playwright) гоняется браузерным харнессом (Playwright MCP)
-  против живого приложения (порт 3000 или 3100) — без FAIL.
-- Юнит-тесты гоняются Edge headless `--dump-dom` с уникальным `--user-data-dir` на страницу
-  (общий профиль даёт ложные фейлы — известный флак); ожидание `SUMMARY:` в DOM.
-- После правок исходников прогонять наборы с отключённым HTTP-кэшем браузера
-  (CDP `Network.setCacheDisabled`) — иначе устаревший модуль даёт фантомные падения.
-- Ручной smoke-тест: сервер (3000/3100) → проверить создание компонента, соединение
-  к MASTER OUT, звук клавишей, сохранение/загрузку патча.
+Атомарные изменения с префиксами fix/feat/refactor/docs/chore. Не коммитить backups, временные browser profiles и generated test data. Существующие пользовательские изменения сохранять.

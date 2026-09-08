@@ -74,9 +74,9 @@ check('grid toggle is undoable', () => {
   const row = [...container.querySelectorAll('.rec-row:not(.rec-head)')].pop();
   const cell = row.querySelector('.rec-cell');
   cell.click();
-  if (!engine.byId[id].grid[0]) return false;
+  if (!engine.getStepGrid(id)[0]) return false;
   history.undo();
-  return engine.byId[id].grid[0] === null && history.state().canRedo === true;
+  return engine.getStepGrid(id)[0] === null && history.state().canRedo === true;
 });
 
 check('DEL button runs removeTrack as a command', () => {
@@ -341,6 +341,18 @@ check('✕ removes an insert as an undoable command', () => {
   return engine.byId[id].inserts.length === before;
 });
 
+check('clip picker displays and edits the chosen nonzero clip', () => {
+  const t = engine.addTrack({ name: 'Selection test' });
+  const a = engine.addClip(t.id, { name: 'First', events: [{ note: 'C4', start: 0, dur: 120 }] });
+  const b = engine.addClip(t.id, { name: 'Later', start: 1920, events: [{ note: 'E4', start: 0, dur: 120 }] });
+  const picker = [...container.querySelectorAll('.rec-clip-select')].pop();
+  picker.value = b.id; picker.dispatchEvent(new Event('change'));
+  const row = [...container.querySelectorAll('#recGrid .rec-row')].pop();
+  const cell = row.querySelector('.rec-cell');
+  const shown = cell.textContent === 'E4' && engine.getStepClip(t.id).id === b.id;
+  cell.click();
+  return shown && b.events.length === 0 && a.events.length === 1;
+});
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';

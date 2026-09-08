@@ -159,14 +159,14 @@ check('removeTrackCommand undo restores track config', () => {
   return !!back && back.wave === 'sawtooth' && back.filterType === 'lowpass' && back.gridNote === 'E3';
 });
 
-check('removeTrackCommand undo restores grid and rt', () => {
+check('removeTrackCommand undo restores the step clip', () => {
   const e = makeEngine();
   const t = e.addTrack({ name: 'T' });
   e.toggleGridStep(t.id, 2, 'C4', 3);
   const h = createHistory();
   h.execute(removeTrackCommand(e, t.id));
   h.undo();
-  const cell = e.byId[t.id].grid[2];
+  const cell = e.getStepGrid(t.id)[2];
   return cell && cell.note === 'C4' && cell.dur === 3;
 });
 
@@ -191,17 +191,20 @@ check('updateTrackCommand redo reapplies the patch', () => {
   return e.byId[t.id].gridDur === 4;
 });
 
-check('clearTrackCommand undo restores grid and rt', () => {
+check('clearTrackCommand undo restores clip events', () => {
   const e = makeEngine();
   const t = e.addTrack({ name: 'T' });
   e.toggleGridStep(t.id, 0, 'C4');
-  t.rt = [{ note: 'E4', start: 0.5, dur: 0.25 }];
+  e.setClipEvents(t.id, e.byId[t.id].clips.find(c => c.start === 0).id, [
+    { note: 'C4', start: 0, dur: 120 },
+    { note: 'E4', start: 480, dur: 240 },
+  ]);
   const h = createHistory();
   h.execute(clearTrackCommand(e, t.id));
-  if (e.byId[t.id].grid.every(s => s === null) === false) return false;
+  if (e.getStepGrid(t.id).some(c => c !== null)) return false;
   h.undo();
-  const back = e.byId[t.id];
-  return back.grid[0] && back.grid[0].note === 'C4' && back.rt.length === 1 && back.rt[0].note === 'E4';
+  const grid = e.getStepGrid(t.id);
+  return grid[0] && grid[0].note === 'C4' && grid[4] && grid[4].note === 'E4';
 });
 
 check('toggleGridStepCommand undo restores the exact cell', () => {
@@ -211,9 +214,9 @@ check('toggleGridStepCommand undo restores the exact cell', () => {
   const cmd = toggleGridStepCommand(e, t.id, 5);
   h.execute(cmd);
   // cmd.on is the cell object when toggled on (truthy), false when off
-  if (!cmd.on || !e.byId[t.id].grid[5]) return false;
+  if (!cmd.on || !e.getStepGrid(t.id)[5]) return false;
   h.undo();
-  return e.byId[t.id].grid[5] === null;
+  return e.getStepGrid(t.id)[5] === null;
 });
 
 check('setGridStepCommand undo restores previous pitch/dur', () => {
@@ -222,10 +225,10 @@ check('setGridStepCommand undo restores previous pitch/dur', () => {
   e.toggleGridStep(t.id, 3, 'C4', 1);
   const h = createHistory();
   h.execute(setGridStepCommand(e, t.id, 3, { note: 'A3', dur: 2 }));
-  const cell = e.byId[t.id].grid[3];
+  const cell = e.getStepGrid(t.id)[3];
   if (!(cell.note === 'A3' && cell.dur === 2)) return false;
   h.undo();
-  const back = e.byId[t.id].grid[3];
+  const back = e.getStepGrid(t.id)[3];
   return back.note === 'C4' && back.dur === 1;
 });
 
@@ -242,7 +245,8 @@ check('commands compose: add->toggle->undo->undo->redo->redo', () => {
   h.redo(); // re-add
   h.redo(); // re-toggle
   const back = e.byId[add.createdId];
-  return e.tracks.length === 1 && back.grid[0] && back.grid[0].note === 'C4';
+  const cell = e.getStepGrid(add.createdId)[0];
+  return e.tracks.length === 1 && cell && cell.note === 'C4';
 });
 
 check('setTrackFlagCommand toggles muted and undo restores it', () => {

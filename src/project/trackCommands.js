@@ -6,15 +6,15 @@ import { ticksPerSecond } from './clipEvents.js';
 // live track engine and capture enough state to undo the mutation.
 
 function copyGrid(grid) {
-  return (grid || []).map(c => (c ? { note: c.note, dur: c.dur } : null));
+  return (grid || []).map(c => (c ? (typeof c === 'string' ? c : { ...c }) : null));
 }
 
 function copyRt(rt) {
-  return (rt || []).map(n => ({ note: n.note, start: n.start, dur: n.dur }));
+  return (rt || []).map(n => ({ ...n }));
 }
 
 function copyClips(clips) {
-  return (clips || []).map(c => ({ ...c, events: (c.events || []).slice() }));
+  return (clips || []).map(c => ({ ...c, audio: c.audio ? { ...c.audio } : null, events: (c.events || []).map(ev => ({ ...ev })) }));
 }
 
 function copyInserts(inserts) {
@@ -28,7 +28,7 @@ function trackSnapshot(t) {
     wave: t.wave, filterType: t.filterType, filterFreq: t.filterFreq, filterQ: t.filterQ,
     adsr: { ...t.adsr }, volume: t.volume, gridNote: t.gridNote, gridDur: t.gridDur,
     midiChannel: typeof t.midiChannel === 'number' ? t.midiChannel : null,
-    grid: copyGrid(t.grid), rt: copyRt(t.rt), clips: copyClips(t.clips),
+    clips: copyClips(t.clips),
     inserts: copyInserts(t.inserts),
   };
 }
@@ -50,16 +50,27 @@ export function addTrackCommand(engine, cfg = {}) {
 
 export function removeTrackCommand(engine, id) {
   let snapshot = null;
+  let index = 0;
+  let active = null;
+  let armed = false;
   return {
     label: 'Remove track',
     apply() {
       const t = engine.byId[id];
       if (!t) return;
       snapshot = trackSnapshot(t);
+      index = engine.tracks.indexOf(t);
+      active = engine.activeTrackId;
+      armed = engine.isArmed(id);
       engine.removeTrack(id);
     },
     undo() {
-      if (snapshot) engine.addTrack(snapshot);
+      if (snapshot) {
+        engine.addTrack(snapshot);
+        engine.reorderTrack(id, index);
+        engine.selectTrack(active);
+        engine.armTrack(id, armed);
+      }
     },
   };
 }
@@ -97,7 +108,7 @@ export function updateTrackCommand(engine, id, patch) {
       before = {};
       Object.keys(patch).forEach(k => {
         const v = t[k];
-        if (Array.isArray(v)) before[k] = k === 'grid' ? copyGrid(v) : k === 'inserts' ? copyInserts(v) : copyRt(v);
+        if (Array.isArray(v)) before[k] = k === 'grid' ? copyGrid(v) : k === 'clips' ? copyClips(v) : k === 'inserts' ? copyInserts(v) : copyRt(v);
         else if (v && typeof v === 'object') before[k] = { ...v };
         else before[k] = v;
       });
@@ -171,22 +182,26 @@ export function reorderTrackCommand(engine, id, toIndex) {
 
 export function clearTrackCommand(engine, id) {
   let snapshot = null;
+  let after = null;
   return {
     label: 'Clear track',
     apply() {
       const t = engine.byId[id];
       if (!t) return;
-      snapshot = { grid: copyGrid(t.grid), rt: copyRt(t.rt) };
+      if (after) { engine.updateTrack(id, after); return; }
+      snapshot = { clips: copyClips(t.clips) };
       engine.clearTrack(id);
+      after = { clips: copyClips(t.clips) };
     },
     undo() {
-      if (snapshot) engine.updateTrack(id, { grid: snapshot.grid, rt: snapshot.rt });
+      if (snapshot) engine.updateTrack(id, snapshot);
     },
   };
 }
 
 // Grid cell toggle. Captures the whole grid so undo restores the exact cell.
 export function toggleGridStepCommand(engine, id, step) {
+  let after = null;
   return {
     label: 'Toggle grid step',
     before: null,
@@ -194,11 +209,13 @@ export function toggleGridStepCommand(engine, id, step) {
     apply() {
       const t = engine.byId[id];
       if (!t) return;
-      this.before = copyGrid(t.grid);
+      if (after) { engine.updateTrack(id, after); return; }
+      this.before = { clips: copyClips(t.clips) };
       this.on = engine.toggleGridStep(id, step);
+      after = { clips: copyClips(t.clips) };
     },
     undo() {
-      if (this.before) engine.updateTrack(id, { grid: this.before });
+      if (this.before) engine.updateTrack(id, this.before);
     },
   };
 }
@@ -206,16 +223,19 @@ export function toggleGridStepCommand(engine, id, step) {
 // Per-cell note/duration edit.
 export function setGridStepCommand(engine, id, step, patch) {
   let before = null;
+  let after = null;
   return {
     label: 'Edit grid step',
     apply() {
       const t = engine.byId[id];
       if (!t) return;
-      before = copyGrid(t.grid);
+      if (after) { engine.updateTrack(id, after); return; }
+      before = { clips: copyClips(t.clips) };
       engine.setGridStep(id, step, patch);
+      after = { clips: copyClips(t.clips) };
     },
     undo() {
-      if (before) engine.updateTrack(id, { grid: before });
+      if (before) engine.updateTrack(id, before);
     },
   };
 }

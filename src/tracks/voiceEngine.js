@@ -236,7 +236,7 @@ export class TrackVoices {
       v._sustainHeld = true;
       return;
     }
-    scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr, v.velScale);
+    scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr, v.velScale * 127);
     v.busyUntil = at + this.track.adsr.r + 0.01;
     v.activeNote = null;
     v.velScale = undefined;
@@ -303,7 +303,7 @@ export class TrackVoices {
       const now = this.ctx.currentTime;
       this.voices.forEach(v => {
         if (v._sustainHeld) {
-          scheduleRelease(v.env.gain, this.ctx, now, this.track.adsr, v.velScale);
+          scheduleRelease(v.env.gain, this.ctx, now, this.track.adsr, v.velScale * 127);
           v.busyUntil = now + this.track.adsr.r + 0.01;
           v.activeNote = null;
           v.velScale = undefined;

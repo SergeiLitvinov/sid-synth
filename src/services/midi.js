@@ -15,6 +15,7 @@ import { noteForMidi } from './notes.js';
 export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onPitchBend }) {
   let midiAccess = null;
   let selectedDeviceId = null;
+  const subscribers = new Set();
   let onNoteOnCb = onNoteOn || (() => {});
   let onNoteOffCb = onNoteOff || (() => {});
   let onCCCb = onCC || (() => {});
@@ -89,7 +90,12 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
       midiAccess = await navigator.requestMIDIAccess();
       connectAll();
       updateStatus();
-      midiAccess.onstatechange = () => updateStatus();
+      subscribers.forEach(fn => fn());
+      midiAccess.onstatechange = () => {
+        connectAll();
+        updateStatus();
+        subscribers.forEach(fn => fn());
+      };
     } catch (e) {
       if (statusEl) { statusEl.textContent = 'MIDI ERR'; statusEl.style.color = '#ff4444'; }
     }
@@ -132,6 +138,7 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
       return getInputs();
     },
     getInputs,
+    subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
     setCallbacks(cbs) {
       if (cbs.onNoteOn) onNoteOnCb = cbs.onNoteOn;
       if (cbs.onNoteOff) onNoteOffCb = cbs.onNoteOff;
@@ -140,11 +147,14 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
     },
     destroy() {
       if (midiAccess) midiAccess.inputs.forEach(disconnectInput);
+      if (midiAccess) midiAccess.onstatechange = null;
+      subscribers.clear();
+      if (button) button.removeEventListener('click', init);
     },
   };
 
   if (button) {
-    button.addEventListener('click', () => init());
+    button.addEventListener('click', init);
   }
 
   return api;

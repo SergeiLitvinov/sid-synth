@@ -2632,10 +2632,11 @@ check('T ▶ previews transposed pitches without committing', () => {
     && engine.byId.trk_a.clips[0].events[0].note === 'C4';
 });
 
-check('H ▶ on the loop clip sounds the folded grid (what commit would produce)', () => {
+check('H ▶ on the zero clip preserves chords and off-grid timing without committing', () => {
   const container = document.createElement('div');
   const engine = prevEngine([{ id: 'c1', name: 'Clip 1', start: 0, length: 1920, events: [
     { note: 'C4', start: 130, dur: 120, velocity: 100 },
+    { note: 'E4', start: 130, dur: 87, velocity: 73 },
     { note: 'D4', start: 250, dur: 120, velocity: 100 },
   ] }]);
   const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history: createHistory() });
@@ -2643,12 +2644,13 @@ check('H ▶ on the loop clip sounds the folded grid (what commit would produce)
   container.querySelector('.pr-h-timing').value = '5'; // ±6 ticks — stays inside each step
   container.querySelector('.pr-h-vel').value = '0';
   prevBtn(container, 'pr-h-prev').click();
-  // The commit folds starts into the 16-step grid, so the preview must sound
-  // gridded starts (multiples of 120 ticks) even though humanize moved them.
+  // All offsets remain within the configured jitter, never folded to steps.
   const offsets = engine.auditionCalls.map(c => Math.round((c.when - 0.06) * 960));
-  return engine.auditionCalls.length === 2
-    && offsets.every(o => o % 120 === 0)
-    && offsets.includes(120) && offsets.includes(240)
+  return engine.auditionCalls.length === 3
+    && offsets[0] >= 124 && offsets[0] <= 136
+    && offsets[1] >= 124 && offsets[1] <= 136
+    && offsets[2] >= 244 && offsets[2] <= 256
+    && near(engine.auditionCalls[1].durSec, 87 / 960, 1e-9)
     && engine.byId.trk_a.clips[0].events[0].start === 130;
 });
 

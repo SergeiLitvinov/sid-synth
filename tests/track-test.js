@@ -81,17 +81,17 @@ check('stepDur/loopDur derived from BPM', () => {
 check('toggleGridStep toggles on then off', () => {
   const d = makeFixture();
   d.engine.toggleGridStep('trk_a', 3, 'E4');
-  const on = d.track.grid[3];
+  const on = d.engine.getStepGrid('trk_a')[3];
   if (!on || on.note !== 'E4' || on.dur !== 1) return false;
   d.engine.toggleGridStep('trk_a', 3);
-  return d.track.grid[3] === null;
+  return d.engine.getStepGrid('trk_a')[3] === null;
 });
 
 check('toggleGridStep stores per-cell note and duration', () => {
   const d = makeFixture();
   d.engine.setGridDur('trk_a', 2);
   d.engine.toggleGridStep('trk_a', 5, 'G3', 3);
-  const c = d.track.grid[5];
+  const c = d.engine.getStepGrid('trk_a')[5];
   return c && c.note === 'G3' && c.dur === 3;
 });
 
@@ -99,16 +99,16 @@ check('setGridStep edits pitch and duration of a cell', () => {
   const d = makeFixture();
   d.engine.toggleGridStep('trk_a', 0, 'C4');
   d.engine.setGridStep('trk_a', 0, { note: 'E4', dur: 2 });
-  const c = d.track.grid[0];
+  const c = d.engine.getStepGrid('trk_a')[0];
   return c && c.note === 'E4' && c.dur === 2;
 });
 
-check('legacy string grid cells normalize to {note,dur}', () => {
+check('legacy string grid cells fold into loop clip events', () => {
   const d = makeFixture();
-  d.track.grid[0] = 'C4';
-  d.track.grid[1] = null;
-  const t = d.engine.getTracks()[0];
-  return t.grid[0] && t.grid[0].note === 'C4' && t.grid[0].dur === 1 && t.grid[1] === null;
+  d.engine.addTrack({ id: 'trk_legacy', grid: ['C4', null] });
+  const t = d.engine.byId.trk_legacy;
+  const loop = t.clips.find(c => c.start === 0);
+  return !!loop && loop.events.length === 1 && loop.events[0].note === 'C4' && loop.events[0].dur === 120;
 });
 
 check('grid playback uses per-cell duration', () => {
@@ -303,48 +303,46 @@ check('getTracks returns clip events sorted by tick', () => {
   return starts.every((s, i) => i === 0 || s >= starts[i - 1]);
 });
 
-check('track restored with clip events derives grid/rt for playback', () => {
+check('track restored with clip events projects the step grid', () => {
   const d = makeFixture(120);
   const cfg = {
     id: 'trk_restored',
-    grid: Array(16).fill(null),
-    rt: [],
     clips: [{ id: 'clip_a', name: 'Loop', start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] }],
   };
-  const t = d.engine.addTrack(cfg);
-  return t.grid[0] && t.grid[0].note === 'C4' && t.grid[0].dur === 1;
+  d.engine.addTrack(cfg);
+  const grid = d.engine.getStepGrid('trk_restored');
+  return grid[0] && grid[0].note === 'C4' && grid[0].dur === 1;
 });
 
-check('track restored with clip rt events derives rt in seconds', () => {
+check('track restored with clip events projects timed steps', () => {
   const d = makeFixture(120);
   const cfg = {
     id: 'trk_rt',
-    grid: Array(16).fill(null),
-    rt: [],
     clips: [{ id: 'clip_b', name: 'Loop', start: 0, length: 1920, events: [{ note: 'E4', start: 480, dur: 240 }] }],
   };
-  const t = d.engine.addTrack(cfg);
-  return t.rt.length === 1 && Math.abs(t.rt[0].start - 0.5) < 1e-6 && Math.abs(t.rt[0].dur - 0.25) < 1e-6;
+  d.engine.addTrack(cfg);
+  const grid = d.engine.getStepGrid('trk_rt');
+  return grid[4] && grid[4].note === 'E4';
 });
 
-check('non-loop clip events are left untouched by the loop sync', () => {
+check('non-loop clip events are left untouched', () => {
   const d = makeFixture(120);
   d.engine.addClip('trk_a', { start: 0, length: 1920 });
   d.engine.addClip('trk_a', { id: 'clip_c', start: 1920, length: 1920, events: [{ note: 'B2', start: 0, dur: 120 }] });
   const clip = d.track.clips.find(c => c.id === 'clip_c');
-  return clip.events.length === 1 && clip.events[0].note === 'B2';
+  const loop = d.track.clips.find(c => c.start === 0);
+  return clip.events.length === 1 && clip.events[0].note === 'B2' && loop.events.length === 0;
 });
 
-check('setClipEvents on the loop clip re-derives grid and clears rt', () => {
+check('setClipEvents on the loop clip stores events (projection reads them)', () => {
   const d = makeFixture(120);
   d.engine.addClip('trk_a', { start: 0, length: 1920 });
   d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120 }, { note: 'D4', start: 360, dur: 120 }]);
-  return d.track.grid[0] && d.track.grid[0].note === 'C4'
-    && d.track.grid[3] && d.track.grid[3].note === 'D4' && d.track.grid[3].dur === 1
-    && d.track.rt.length === 0;
+  const grid = d.engine.getStepGrid('trk_a');
+  return grid[0] && grid[0].note === 'C4' && grid[3] && grid[3].note === 'D4' && grid[3].dur === 1;
 });
 
-check('setClipEvents on a non-loop clip does not touch grid/rt', () => {
+check('setClipEvents on a non-loop clip leaves the loop clip empty', () => {
   const d = makeFixture(120);
   d.engine.addClip('trk_a', { start: 0, length: 1920 });
   d.engine.addClip('trk_a', { id: 'clip_n', start: 1920, length: 1920 });
@@ -352,7 +350,7 @@ check('setClipEvents on a non-loop clip does not touch grid/rt', () => {
   const clip = d.track.clips.find(c => c.id === 'clip_n');
   const loop = d.track.clips.find(c => c.start === 0);
   return clip.events.length === 1 && clip.events[0].note === 'A3' && clip.events[0].dur === 240
-    && d.track.grid.every(c => c === null) && d.track.rt.length === 0 && loop.events.length === 0;
+    && loop.events.length === 0;
 });
 
 check('setClipEvents sorts and copies events (no caller aliasing)', () => {
@@ -370,27 +368,25 @@ check('setClipEvents on a missing clip is a no-op', () => {
   return d.engine.setClipEvents('trk_a', 'nope', [{ note: 'C4', start: 0, dur: 120 }]) === false;
 });
 
-check('a grid edit after a piano-roll edit re-syncs loop events', () => {
+check('a grid edit after a piano-roll edit merges loop events', () => {
   const d = makeFixture(120);
   d.engine.addClip('trk_a', { start: 0, length: 1920 });
   d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120 }]);
   d.engine.toggleGridStep('trk_a', 8, 'E4');
   const clip = d.track.clips.find(c => c.start === 0);
   return clip.events.some(e => e.note === 'E4' && e.start === 8 * 120)
-    && d.track.grid[8] && d.track.grid[8].note === 'E4';
+    && clip.events.some(e => e.note === 'C4')
+    && d.engine.getStepGrid('trk_a')[8].note === 'E4';
 });
 
-check('setClipEvents preserves velocity through the loop grid round-trip', () => {
+check('setClipEvents preserves velocity in clip events', () => {
   const d = makeFixture(120);
   d.engine.addClip('trk_a', { start: 0, length: 1920 });
   d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120, velocity: 64 }]);
-  // setClipEvents re-quantizes into grid (cell gains vel); the restore path
-  // (addTrack) and getTracks re-derive events via syncLoopClip -> gridToClipEvents,
-  // so the velocity survives the round-trip.
+  // Velocity lives on the event itself now; snapshots carry it through.
   const track = d.engine.getTracks().find(t => t.id === 'trk_a');
   const clip = track.clips.find(c => c.start === 0);
-  return d.track.grid[0].vel === 64
-    && clip.events.length === 1 && clip.events[0].velocity === 64;
+  return clip.events.length === 1 && clip.events[0].velocity === 64;
 });
 
 check('addClip without a start defaults to the loop position', () => {
@@ -792,8 +788,7 @@ check('REPLACE mode clears the loop clip before recording', () => {
   d.engine.noteOff('E4');
   d.engine.stop();
   const loop = d.track.clips.find(c => c.start === 0);
-  return d.track.grid.every(c => c === null)
-    && !!loop && loop.events.length === 1 && loop.events[0].note === 'E4';
+  return !!loop && loop.events.length === 1 && loop.events[0].note === 'E4';
 });
 
 check('OVERDUB mode keeps existing clip notes while recording new ones', () => {

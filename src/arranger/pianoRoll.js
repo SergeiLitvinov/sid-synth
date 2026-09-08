@@ -26,7 +26,6 @@ import { legatoEvents } from './legato.js';
 import { fixedLengthEvents } from './fixedLength.js';
 import { humanizeEvents } from './humanize.js';
 import { previewEvents } from './preview.js';
-import { clipEventsToGrid, gridToClipEvents } from '../project/clipEvents.js';
 import { editClipEventsCommand, setClipAudioCommand } from '../project/trackCommands.js';
 
 const CELL_W = 18;
@@ -228,9 +227,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   // velocity (±N, clamped to 1..127) inputs plus an H button that nudges note
   // starts and velocities with random offsets for a performed feel. Applies to
   // the marquee selection, or every note when none is selected — committed
-  // through the command history so undo/redo work. On a loop clip the start
-  // offsets fold into the 16-step grid on commit (see #31/#33), so timing
-  // humanize is only observable on arranged clips; velocity survives both.
+  // through the command history so undo/redo work, preserving off-grid timing.
   const hrow = document.createElement('div');
   hrow.className = 'pr-hrow';
   const hName = document.createElement('span');
@@ -453,16 +450,8 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   function previewTransformed(transformed) {
     if (!sel || !engine.auditionNote || !transformed || !transformed.length) return;
     const ppq = transport.ppq || 480;
-    // A commit on the loop clip folds starts into its 16-step grid (see
-    // #31/#33); the preview must sound what the commit would produce.
-    let events = transformed;
-    const tracks = (engine.getTracks && engine.getTracks()) || [];
-    const t = tracks.find(x => x.id === sel.trackId);
-    const clip = t && (t.clips || []).find(c => c.id === sel.clipId);
-    if (clip && ((t.clips || []).find(c => c.start === 0) || (t.clips || [])[0]) === clip) {
-      events = gridToClipEvents(clipEventsToGrid(events, { ppq }), { ppq });
-    }
-    previewEvents(events, {
+    // Audition the same full-resolution phrase that apply will commit.
+    previewEvents(transformed, {
       bpm: engine.bpm || 120,
       ppq,
       now: (engine.ctx && engine.ctx.currentTime) || 0,

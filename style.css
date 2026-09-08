@@ -472,7 +472,9 @@ button.btn-red:hover { background: #aa4444; color: #000; }
 
 .rec-row { display: flex; align-items: stretch; gap: 2px; margin-bottom: 2px; }
 .rec-head .rec-step-h { width: 26px; font-size: 10px; text-align: center; color: #3a6a3a; }
-.rec-row-label { width: 70px; flex-shrink: 0; font-size: 11px; padding-top: 5px; overflow: hidden; }
+.rec-row-label { width: 140px; flex-shrink: 0; font-size: 11px; padding-top: 5px; overflow: hidden; }
+.rec-clip-select { display: block; width: 100%; margin-top: 4px; background: #101a10; color: #aaffaa; border: 1px solid #477747; font: inherit; }
+.rec-clip-select:focus-visible { outline: 2px solid #ff55ff; outline-offset: -2px; }
 .rec-cell {
   width: 26px; height: 24px;
   border: 1px solid #1a2a1a;
@@ -1210,4 +1212,3 @@ button.btn-red:hover { background: #aa4444; color: #000; }
   cursor: pointer;
 }
 .pr-audio-clear:hover { background: #4af74a; color: #000; }
-

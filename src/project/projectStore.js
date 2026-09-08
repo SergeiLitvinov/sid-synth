@@ -18,12 +18,15 @@ export function createProjectStore(cfg = {}) {
   const capture = cfg.capture;   // () => project doc (serializable object)
   const apply = cfg.apply;       // (project) => void (restore live app state)
   let timer = null;
+  let blocked = false;
+  const onError = cfg.onError || (() => {});
 
   function read(key) {
     try { return storage.getItem(key); } catch (e) { return null; }
   }
   function write(key, value) {
-    try { storage.setItem(key, value); } catch (e) {}
+    try { storage.setItem(key, value); return true; }
+    catch (e) { onError(e); return false; }
   }
   function remove(key) {
     try { storage.removeItem(key); } catch (e) {}
@@ -33,8 +36,9 @@ export function createProjectStore(cfg = {}) {
   function saveNow() {
     clearTimeout(timer);
     timer = null;
-    if (!capture) return;
-    try { write(storageKey, JSON.stringify(capture())); } catch (e) {}
+    if (!capture || blocked) return false;
+    try { return write(storageKey, JSON.stringify(capture())); }
+    catch (e) { onError(e); return false; }
   }
 
   // Debounced save.
@@ -51,7 +55,13 @@ export function createProjectStore(cfg = {}) {
   function readProject() {
     const raw = read(storageKey);
     if (raw) {
-      try { return migrateProject(JSON.parse(raw)); } catch (e) { /* fall through */ }
+      try { return migrateProject(JSON.parse(raw)); }
+      catch (e) {
+        // Never replace unreadable/newer data with an empty startup session.
+        blocked = true;
+        onError(e);
+        return null;
+      }
     }
     let autosave = null;
     let tracksStore = null;
@@ -59,9 +69,10 @@ export function createProjectStore(cfg = {}) {
     try { tracksStore = JSON.parse(read(tracksKey)); } catch (e) {}
     if (autosave === null && tracksStore === null) return null;
     const project = fromLegacy({ autosave, tracksStore });
-    try { write(storageKey, JSON.stringify(project)); } catch (e) {}
-    remove(autosaveKey);
-    remove(tracksKey);
+    if (write(storageKey, JSON.stringify(project))) {
+      remove(autosaveKey);
+      remove(tracksKey);
+    }
     return project;
   }
 
@@ -79,6 +90,7 @@ export function createProjectStore(cfg = {}) {
     clearTimeout(timer);
     timer = null;
     remove(storageKey);
+    blocked = false;
   }
 
   return { saveNow, save, markDirty, restore, readRaw, readProject, clear };

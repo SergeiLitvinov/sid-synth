@@ -5,7 +5,7 @@ import { TrackVoices } from './voiceEngine.js';
 import { defaultInsertParams } from './inserts.js';
 import {
   gridToClipEvents, rtToClipEvents, mergeClipEvents,
-  clipEventsToGrid, clipEventsToRt, stepTicks, ticksPerSecond,
+  stepTicks, ticksPerSecond,
 } from '../project/clipEvents.js';
 import { normalizeAudioRef, createAudioEngine } from '../audio/audioEngine.js';
 
@@ -48,8 +48,6 @@ export function defaultTrackConfig(cfg = {}) {
     gridNote: cfg.gridNote || 'C4',
     gridDur: cfg.gridDur || 1,
     midiChannel: typeof cfg.midiChannel === 'number' ? cfg.midiChannel : null,
-    grid: Array.isArray(cfg.grid) ? cfg.grid.slice() : Array(STEPS_PER_LOOP).fill(null),
-    rt: Array.isArray(cfg.rt) ? cfg.rt.map(n => ({ ...n })) : [],
     clips: Array.isArray(cfg.clips) ? cfg.clips.map(defaultClip) : [],
     inserts: Array.isArray(cfg.inserts)
       ? cfg.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } }))
@@ -57,14 +55,13 @@ export function defaultTrackConfig(cfg = {}) {
   };
 }
 
-// Multi-track recorder built on TrackVoices. One 16-step loop (4/4 sixteenths).
-// Two event sources per track: a step grid (quantized pattern) and realtime
-// notes captured from the keyboard while recording. Both are scheduled with a
-// lookahead timer against the Web Audio clock, so they stay sample-accurate.
-//
-// Grid cells hold `{ note, dur }` (dur in steps, default from track.gridDur) or
-// null. Legacy string cells ("C4") are normalized on read, so old saved tracks
-// keep working.
+// Multi-track recorder built on TrackVoices. The loop clip (start 0) is the
+// canonical note store: recording, step edits and the scheduler read and
+// write its `events` (PPQ ticks), scheduled with a lookahead timer against
+// the Web Audio clock for sample accuracy. The 16-step grid is a pure
+// projection (clipSelection.getGrid); gridNote/gridDur are only defaults
+// for new steps. Legacy string cells ("C4") normalize on clip import, so
+// old saved tracks keep working through the load-time fold.
 export function createTrackEngine(ctx, dest, config = {}) {
   const engine = {
     ctx,
@@ -115,17 +112,14 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!['song', 'pattern'].includes(mode) || mode === engine.playbackMode) return;
     if (engine._playing) engine.stop();
     engine.playbackMode = mode;
-    if (mode === 'song') engine.tracks.forEach(t => {
-      if (!t.clips.length && (t.grid.some(Boolean) || t.rt.length)) engine.addClip(t.id, { start: 0 });
-    });
     _emitState();
   };
 
   // ---- MIDI clips -----------------------------------------------------
   // The loop clip (start 0) is the canonical note store: recording, step
   // edits and the scheduler all read and write its `events` (PPQ ticks).
-  // t.grid / t.rt survive only as legacy snapshot fields; nothing derives
-  // clip events from them anymore (the mirror is gone).
+  // Tracks carry no grid/rt fields; legacy documents fold them into a loop
+  // clip once, at the parse boundary (serialize) or addTrack (raw configs).
 
   // ---- track management ------------------------------------------------
   engine.addTrack = (cfg = {}) => {
@@ -137,17 +131,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
       id = 'trk_' + (++engine._idCount);
     }
     const t = defaultTrackConfig({ ...cfg, id });
-    // Legacy backing (grid/rt) folds once into a start-0 loop clip so the
-    // schedulers never read grid/rt directly anymore.
-    if (!t.clips.length && (t.grid.some(Boolean) || t.rt.length)) {
-      t.clips.push(defaultClip({ start: 0, events: mergeClipEvents(gridToClipEvents(t.grid, { ppq: engine.ppq }), rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq })) }));
-    }
-    const loopClip = (t.clips || []).find(c => c.start === 0);
-    if (loopClip && (loopClip.events || []).length) {
-      const hasGrid = (t.grid || []).some(c => !!c);
-      if (!hasGrid && !(t.rt || []).length) {
-        t.grid = clipEventsToGrid(loopClip.events, { ppq: engine.ppq });
-        t.rt = clipEventsToRt(loopClip.events, { bpm: engine.bpm, ppq: engine.ppq });
+    // Legacy backing folds once into a start-0 loop clip (read from cfg:
+    // the model no longer carries grid/rt fields).
+    if (!t.clips.length) {
+      const legacyGrid = Array.isArray(cfg.grid) ? cfg.grid : [];
+      const legacyRt = Array.isArray(cfg.rt) ? cfg.rt : [];
+      if (legacyGrid.some(Boolean) || legacyRt.length) {
+        t.clips.push(defaultClip({ start: 0, events: mergeClipEvents(gridToClipEvents(legacyGrid, { ppq: engine.ppq }), rtToClipEvents(legacyRt, { bpm: engine.bpm, ppq: engine.ppq })) }));
       }
     }
     t.voice = new TrackVoices(engine.ctx, t, dest);
@@ -193,17 +183,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!t) return;
     Object.keys(patch).forEach(k => {
       if (k === 'adsr') t.adsr = { ...t.adsr, ...patch.adsr };
-      else if (k === 'rt') t.rt = Array.isArray(patch.rt) ? patch.rt.map(n => ({ ...n })) : t.rt;
+      else if (k === 'grid' || k === 'rt') { /* legacy backing removed: clips carry the notes */ }
       else if (k === 'clips') t.clips = Array.isArray(patch.clips) ? patch.clips.map(defaultClip) : t.clips;
       else if (k === 'inserts') t.inserts = Array.isArray(patch.inserts)
         ? patch.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } }))
         : (t.inserts || []);
       else t[k] = patch[k];
     });
-    if ('clips' in patch) {
-      const loop = t.clips.find(c => c.start === 0);
-      if (loop) t.grid = clipEventsToGrid(loop.events || [], { ppq: engine.ppq });
-    }
     _applyAudibility();
     if ('inserts' in patch && t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
     _emitState();
@@ -280,10 +266,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!t) return null;
     const clip = defaultClip(cfg);
     t.clips.push(clip);
-    if (clip.start === 0 && clip.events.length) {
-      t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
-      t.rt = [];
-    }
     _emitState();
     return clip;
   };
@@ -293,10 +275,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!t) return false;
     const i = t.clips.findIndex(c => c.id === clipId);
     if (i < 0) return false;
-    if (t.clips[i].start === 0) {
-      t.grid = Array(STEPS_PER_LOOP).fill(null);
-      t.rt = [];
-    }
     t.clips.splice(i, 1);
     _emitState();
     return true;
@@ -320,11 +298,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const clip = t && t.clips.find(c => c.id === clipId);
     if (!clip) return false;
     clip.events = (events || []).map(ev => ({ ...ev })).sort((a, b) => (a.start || 0) - (b.start || 0));
-    const loop = t.clips.find(c => c.start === 0);
-    if (clip === loop) {
-      t.grid = clipEventsToGrid(clip.events, { ppq: engine.ppq });
-      t.rt = [];
-    }
     _emitState();
     return true;
   };
@@ -436,7 +409,6 @@ export function createTrackEngine(ctx, dest, config = {}) {
       wave: t.wave, filterType: t.filterType, filterFreq: t.filterFreq, filterQ: t.filterQ,
       adsr: { ...t.adsr }, volume: t.volume, gridNote: t.gridNote, gridDur: t.gridDur,
       midiChannel: typeof t.midiChannel === 'number' ? t.midiChannel : null,
-      grid: t.grid.map(c => normalizeCell(c)), rt: t.rt.map(n => ({ ...n })),
       clips: t.clips.map(c => ({ ...c, audio: c.audio ? { ...c.audio } : null, events: (c.events || []).map(ev => ({ ...ev })) })),
       inserts: t.inserts.map(i => ({ id: i.id, type: i.type, params: { ...(i.params || {}) } })),
     };
@@ -465,16 +437,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
   });
 
 // ---- grid editing -----------------------------------------------------
-  // Grid cells are `{ note, dur, vel }` or null. `note` is a pitch name like
-  // "C4"; `dur` is note length in sixteenth-steps (default 1); `vel` (0-127) is
-  // the note velocity the cell was derived from (piano roll, backlog #27).
-  function normalizeCell(c) {
-    if (!c) return null;
-    if (typeof c === 'string') return { note: c, dur: 1 };
-    const out = { note: c.note, dur: typeof c.dur === 'number' && c.dur > 0 ? c.dur : 1 };
-    if (typeof c.vel === 'number') out.vel = c.vel;
-    return out;
-  }
+// The 16-step grid is a projection of the step clip's events
+// (clipSelection.getGrid); edits below always land on clip events.
 
   engine.toggleGridStep = (id, step, note, dur) => {
     const t = engine.byId[id];
@@ -515,9 +479,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   engine.clearTrack = (id) => {
     const t = engine.byId[id];
+    if (!t) return;
     const clip = engine.getStepClip(id);
-    if (clip) { engine.setClipEvents(id, clip.id, []); return; }
-    if (t) { t.grid = Array(STEPS_PER_LOOP).fill(null); t.rt = []; _emitState(); }
+    if (clip) engine.setClipEvents(id, clip.id, []);
+    _emitState();
   };
 
   // ---- transport --------------------------------------------------------
@@ -791,17 +756,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
           });
         }
         let clip = t.clips.find(c => c.start === 0);
-        if (!clip) {
-          // First take on a clipless track: fold any legacy grid/rt backing
-          // into the new loop clip so overdub keeps playing it.
-          clip = engine.addClip(t.id, { start: 0 });
-          if (clip) {
-            clip.events = mergeClipEvents(
-              gridToClipEvents(t.grid, { ppq: engine.ppq }),
-              rtToClipEvents(t.rt, { bpm: engine.bpm, ppq: engine.ppq }),
-            );
-          }
-        }
+        if (!clip) clip = engine.addClip(t.id, { start: 0 });
         if (clip) {
           clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
         }
@@ -811,18 +766,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
   }
 
   // Clear the loop (start-0) clip so a REPLACE-mode record starts empty —
-  // the same clip _commitBuffer writes the take into. Falls back to the
-  // legacy backing only when the track has no clips.
+  // the same clip _commitBuffer writes the take into.
   function _clearLoopClip(t) {
     if (!t) return;
     const clip = (t.clips || []).find(c => c.start === 0);
-    if (clip) {
-      engine.setClipEvents(t.id, clip.id, []);
-      return;
-    }
-    t.grid = t.grid.map(() => null);
-    t.rt = [];
-    _emitState();
+    if (clip) engine.setClipEvents(t.id, clip.id, []);
   }
 
   // Snap a recorded note (in PPQ ticks) to the grid; mirrors quantizeStart from

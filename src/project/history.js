@@ -28,6 +28,8 @@ export function createHistory({ onChange } = {}) {
   function execute(command) {
     if (!command || typeof command.apply !== 'function') return false;
     command.apply();
+    // A new branch can have the same depth as a saved, discarded branch.
+    if (cleanDepth > undoStack.length) cleanDepth = -1;
     undoStack.push(command);
     redoStack.length = 0;
     dirty = undoStack.length !== cleanDepth;

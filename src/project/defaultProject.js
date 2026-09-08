@@ -26,7 +26,7 @@ export function defaultClip(cfg = {}) {
     color: cfg.color || null,
     start: cfg.start === undefined ? 0 : cfg.start,
     length: cfg.length === undefined ? DEFAULT_CLIP_LENGTH_TICKS : cfg.length,
-    events: Array.isArray(cfg.events) ? cfg.events.slice() : [],
+    events: Array.isArray(cfg.events) ? cfg.events.map(ev => ({ ...ev })) : [],
     audio: cfg.audio && typeof cfg.audio === 'object' ? { ...cfg.audio } : null,
   };
 }
@@ -53,8 +53,6 @@ export function defaultTrackData(cfg = {}) {
     gridNote: cfg.gridNote || 'C4',
     gridDur: cfg.gridDur || 1,
     midiChannel: typeof cfg.midiChannel === 'number' ? cfg.midiChannel : null,
-    grid: Array.isArray(cfg.grid) ? cfg.grid.slice() : emptyGrid(),
-    rt: Array.isArray(cfg.rt) ? cfg.rt.map(n => ({ ...n })) : [],
     clips: Array.isArray(cfg.clips) ? cfg.clips.map(c => ({ ...c })) : [],
     inserts: Array.isArray(cfg.inserts) ? cfg.inserts.map(i => ({ ...i, params: { ...(i.params || {}) } })) : [],
   };
@@ -71,6 +69,7 @@ export function defaultProject(cfg = {}) {
     createdAt: cfg.createdAt || now,
     modifiedAt: cfg.modifiedAt || now,
     tempo: cfg.tempo === undefined ? 120 : cfg.tempo,
+    playbackMode: cfg.playbackMode === 'song' ? 'song' : 'pattern',
     loopEnabled: !!cfg.loopEnabled,
     loopStartTicks: cfg.loopStartTicks !== undefined ? cfg.loopStartTicks : 0,
     loopEndTicks: loopEnd,

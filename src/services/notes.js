@@ -5,7 +5,11 @@ export const NOTES = {
 };
 
 export function noteToFreq(note) {
-  return NOTES[note] || 440;
+  const match = /^([A-G])(#?)(-?\d+)$/i.exec(note || '');
+  if (!match) return 440;
+  const pitch = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[match[1].toUpperCase()];
+  const midi = (Number(match[3]) + 1) * 12 + pitch + (match[2] ? 1 : 0);
+  return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
 export function resolveNote(note) {
@@ -13,7 +17,7 @@ export function resolveNote(note) {
 }
 
 export function noteForMidi(midiNote) {
-  return Object.keys(NOTES).find(
-    (n) => Math.round(NOTES[n]) === Math.round(440 * Math.pow(2, (midiNote - 69) / 12))
-  );
+  if (!Number.isInteger(midiNote) || midiNote < 0 || midiNote > 127) return undefined;
+  return ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][midiNote % 12]
+    + (Math.floor(midiNote / 12) - 1);
 }

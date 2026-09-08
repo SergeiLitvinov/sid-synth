@@ -2,6 +2,7 @@ import { SCHEMA_VERSION, defaultProject, defaultTrackData, defaultClip } from '.
 import { normalizeMarker } from './markers.js';
 import { normalizeAsset } from '../audio/assetStore.js';
 import { normalizeAudioRef } from '../audio/audioEngine.js';
+import { gridToClipEvents, rtToClipEvents, mergeClipEvents } from './clipEvents.js';
 
 // --- validation -----------------------------------------------------------
 // Throws with a descriptive message on any structural problem. Kept strict
@@ -31,8 +32,6 @@ export function validateComponent(c) {
 export function validateTrack(t) {
   if (!t || typeof t !== 'object') throw new Error('track must be an object');
   if (typeof t.id !== 'string' || !t.id) throw new Error('track missing id');
-  if (!Array.isArray(t.grid)) throw new Error('track ' + t.id + ' grid must be an array');
-  if (!Array.isArray(t.rt)) throw new Error('track ' + t.id + ' rt must be an array');
   if (t.clips !== undefined && !Array.isArray(t.clips)) throw new Error('track ' + t.id + ' clips must be an array');
   return true;
 }
@@ -41,7 +40,7 @@ export function validateTrack(t) {
 // Build a versioned project document from live app state. `components` is a map
 // id -> {type, element, ...params} and captureParams(comp) extracts params.
 // `tracks` is the plain-data array from trackEngine.getTracks().
-export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks, assets }) {
+export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks, assets, playbackMode }) {
   const rackComponents = Object.keys(components || {}).map(cid => {
     const comp = components[cid];
     return {
@@ -60,7 +59,7 @@ export function serializeProject({ components, connections, captureParams, track
     ...(c.mod ? { mod: true } : {}),
   }));
   const project = defaultProject({
-    id, name, tempo, activeTrackId,
+    id, name, tempo, activeTrackId, playbackMode,
     rackComponents,
     rackConnections,
     tracks: (tracks || []).map(normalizeTrackData),
@@ -99,6 +98,7 @@ export function parseProject(data) {
   project.id = typeof project.id === 'string' && project.id ? project.id : defaultProject().id;
   project.tempo = typeof project.tempo === 'number' && project.tempo > 0 ? project.tempo : 120;
   project.loopEnabled = !!project.loopEnabled;
+  project.playbackMode = project.playbackMode === 'song' ? 'song' : 'pattern';
   project.loopStartTicks = typeof project.loopStartTicks === 'number' && project.loopStartTicks >= 0 ? project.loopStartTicks : 0;
   project.loopEndTicks = typeof project.loopEndTicks === 'number' && project.loopEndTicks > 0 ? project.loopEndTicks : 4 * 480;
   project.projectEndTicks = typeof project.projectEndTicks === 'number' && project.projectEndTicks > 0 ? project.projectEndTicks : null;
@@ -106,7 +106,9 @@ export function parseProject(data) {
     components: Array.isArray(project.rack.components) ? project.rack.components.map(normalizeComponent) : [],
     connections: Array.isArray(project.rack.connections) ? project.rack.connections : [],
   } : { components: [], connections: [] };
-  project.tracks = Array.isArray(project.tracks) ? project.tracks.map(normalizeTrackData) : [];
+  project.tracks = Array.isArray(project.tracks)
+    ? project.tracks.map(t => normalizeTrackData(t, { bpm: project.tempo }))
+    : [];
   project.markers = Array.isArray(project.markers) ? project.markers.map(normalizeMarker) : [];
   project.assets = Array.isArray(project.assets) ? project.assets.map(normalizeAsset) : [];
   project.activeTrackId = project.activeTrackId ?? (project.tracks[0] && project.tracks[0].id) ?? null;
@@ -128,12 +130,23 @@ export function normalizeCell(c) {
   return null;
 }
 
-export function normalizeTrackData(t) {
+export function normalizeTrackData(t, { bpm = 120 } = {}) {
   const base = defaultTrackData();
   const src = t && typeof t === 'object' ? t : {};
-  const grid = Array.isArray(src.grid) ? src.grid.map(normalizeCell) : base.grid;
-  const rt = Array.isArray(src.rt) ? src.rt.map(n => ({ note: n.note, start: n.start, dur: n.dur })) : [];
   const clips = Array.isArray(src.clips) ? src.clips.map(normalizeClip) : [];
+  // Legacy backing folds once into a start-0 loop clip; grid/rt never
+  // survive into the normalized document.
+  if (!clips.length) {
+    const grid = Array.isArray(src.grid) ? src.grid : [];
+    const rt = Array.isArray(src.rt) ? src.rt : [];
+    if (grid.some(Boolean) || rt.length) {
+      const folded = mergeClipEvents(
+        gridToClipEvents(grid.map(normalizeCell), { ppq: 480 }),
+        rtToClipEvents(rt, { bpm: typeof bpm === 'number' && bpm > 0 ? bpm : 120, ppq: 480 }),
+      );
+      if (folded.length) clips.push({ ...defaultClip({ start: 0 }), events: folded });
+    }
+  }
   const inserts = Array.isArray(src.inserts)
     ? src.inserts
       .filter(i => i && typeof i === 'object' && typeof i.type === 'string')
@@ -159,8 +172,6 @@ export function normalizeTrackData(t) {
     gridNote: typeof src.gridNote === 'string' ? src.gridNote : base.gridNote,
     gridDur: typeof src.gridDur === 'number' && src.gridDur > 0 ? src.gridDur : base.gridDur,
     midiChannel: typeof src.midiChannel === 'number' ? src.midiChannel : null,
-    grid,
-    rt,
     clips,
     inserts,
   };

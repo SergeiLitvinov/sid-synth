@@ -5,7 +5,7 @@
 `create → serialize → load → migrate` без потери данных (см. Definition of Done
 в `TODO.md`).
 
-Текущая версия схемы: **1**.
+Текущая версия схемы: **1**, PPQ в реализации **480**. Описание обновлено 2026-09-07; это описание формата, не machine-readable JSON Schema и не доказательство полной валидации входных файлов.
 
 ## Общие правила
 
@@ -21,10 +21,11 @@
 | Сущность | Поле | Описание |
 |---|---|---|
 | `project` | `schemaVersion` | int, версия схемы (сейчас 1) |
-| | `id` | string, стабильный UUID проекта |
+| | `id` | string, идентификатор проекта (не гарантированный UUID) |
 | | `name` | string, название (default `Untitled`) |
 | | `createdAt` / `modifiedAt` | string ISO-8601 |
 | | `tempo` | number, BPM |
+| | `playbackMode` | song или pattern; отсутствующее поле нормализуется в pattern для совместимости |
 | | `rack` | объект — modular rack (`components`, `connections`) |
 | | `tracks` | array — recorder tracks |
 | | `activeTrackId` | string \| null, активный трек рекордера |
@@ -50,8 +51,20 @@
 | | `adsr` | `{a, d, s, r}` |
 | | `volume` | number 0..1 |
 | | `gridNote` / `gridDur` | дефолт грида (note name / длительность в steps) |
-| | `grid` | array[16] of `{note, dur}` \| null (пер-ячейковая высота/длительность) |
-| | `rt` | array of `{note, start, dur}` realtime-события |
+| | `grid` | array[16] of `{note, dur, vel?}` \| null, длина в шагах |
+| | `rt` | array of `{note, start, dur, velocity?}`, время в секундах |
+| | `midiChannel` | null (Omni) или канал 1–16 |
+| | `clips` | array of `{id, name, color, start, length, events, audio}`, start/length в ticks |
+| | `inserts` | array of `{id, type, params}`, текущие типы delay/reverb |
+| `clips[].events` | note/start/dur/velocity | Высота строкой, start/dur в ticks относительно clip, velocity 0–127 |
+| `clips[].audio` | hash/offset/gain/fadeIn/fadeOut | null или ссылка на asset, offset/fades в секундах |
+| `project` | assets | Manifest metadata; binary blobs хранятся отдельно в IndexedDB |
+| | markers | Массив маркеров с id/name/tick |
+| | loopEnabled/loopStartTicks/loopEndTicks/projectEndTicks | Состояние loop и конца проекта |
+
+Время tempo map пока не сериализуется целиком: поле tempo — один BPM. Grid/rt являются legacy-представлениями; отказ от двухстороннего зеркалирования в clip.events остаётся задачей TODO. Обычные step-правки теперь точечно меняют события; getTracks не синхронизирует/перезаписывает их при чтении. Runtime scheduling pointers не должны становиться частью схемы. Rack IDs при восстановлении ещё переназначаются с idMap — обещание UUID для всех сущностей было преждевременным.
+
+playbackMode добавлен как необязательное поле версии 1. Новая сессия приложения явно выбирает song, а старый документ без этого поля получает pattern. SONG играет все клипы однократно, PATTERN сохраняет прежний повтор первой области. Это не замена полю loopEnabled, отвечающему за locators транспорта.
 
 ## Минимальный project JSON
 
@@ -137,11 +150,10 @@
 
 - `createProjectStore({ storage, storageKey, autosaveKey, tracksKey, debounceMs, capture, apply })`
   сохраняет весь project snapshot в **один ключ** `sidSynthProject` (debounce 600мс).
-  `capture`/`apply` инжектируются из `main.js`, поэтому модуль не зависит от DOM.
+  `capture`/`apply` поставляет `projectSession.js`, подключаемый в main.js; store не зависит от DOM. `onError` сообщает ошибки сохранения UI.
 - API: `saveNow`, `save` (debounced), `markDirty`, `restore`, `readRaw`, `readProject`, `clear`.
-- `restore()`: читает `sidSynthProject`; при отсутствии/ошибке мигрирует legacy-ключи
-  через `fromLegacy`, пишет мигрированный документ обратно в `sidSynthProject` и
-  **удаляет** `sidSynthAutosave`/`sidSynthTracks`. Новый ключ имеет приоритет.
+- `restore()`: читает `sidSynthProject`; только при его отсутствии мигрирует legacy-ключи.
+  Legacy удаляются лишь после успешной записи нового документа. При ошибке чтения/неподдерживаемой версии существующий снимок сохраняется, автоматическая перезапись блокируется и вызывается onError.
 - Триггеры сохранения (в `main.js`): MutationObserver на рэке, `change`-событие,
   `history.subscribe(...)`, safety-interval 3с.
 

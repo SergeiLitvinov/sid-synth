@@ -80,7 +80,7 @@ check('serializeProject strips non-serializable fields from tracks', () => {
   }];
   const p = serializeProject(st);
   const t = p.tracks[0];
-  return t && !('voice' in t) && !('element' in t) && t.grid.length === 16;
+  return t && !('voice' in t) && !('element' in t) && !('grid' in t) && !('rt' in t) && Array.isArray(t.clips);
 });
 
 check('connections serialize with toChannel/outChannel', () => {
@@ -99,22 +99,28 @@ check('mod connections are marked', () => {
 });
 
 check('serializeProjectJson round-trips to identical structure', () => {
-  const original = serializeProject(fixtureState());
   const json = serializeProjectJson(fixtureState());
+  // Compare one document before/after parsing, not two independently dated
+  // snapshots that can straddle a millisecond boundary.
+  const original = JSON.parse(json);
   const parsed = parseProject(json);
   return JSON.stringify(parsed) === JSON.stringify(original);
 });
 
-check('roundTrip preserves grid cells and rt events', () => {
+check('roundTrip folds legacy grid/rt into a loop clip', () => {
   const st = fixtureState();
-  st.tracks = [defaultTrackData({
-    id: 'trk_1',
+  st.tracks = [{
+    id: 'trk_1', name: 'T',
     grid: [{ note: 'A3', dur: 4 }, null, { note: 'E4', dur: 2 }],
     rt: [{ note: 'C4', start: 0.5, dur: 0.25 }],
-  })];
+  }];
   const p = serializeProject(st);
   const back = roundTrip(p);
-  return JSON.stringify(back) === JSON.stringify(p);
+  const loop = back.tracks[0].clips.find(c => c.start === 0);
+  return JSON.stringify(back) === JSON.stringify(p)
+    && !!loop && loop.events.some(e => e.note === 'A3')
+    && loop.events.some(e => e.note === 'E4') && loop.events.some(e => e.note === 'C4')
+    && !('grid' in back.tracks[0]) && !('rt' in back.tracks[0]);
 });
 
 check('roundTrip preserves MIDI clips', () => {
@@ -147,10 +153,12 @@ check('parseProject normalizes missing/partial clip fields', () => {
   return c && typeof c.id === 'string' && c.start === 0 && c.length === 1920 && Array.isArray(c.events);
 });
 
-check('parseProject normalizes legacy string grid cells', () => {
-  const raw = { schemaVersion: 1, name: 'x', tempo: 120, rack: { components: [], connections: [] }, tracks: [defaultTrackData({ id: 'trk_1', grid: ['C4', null] })] };
+check('parseProject folds legacy string grid cells into a loop clip', () => {
+  const raw = { schemaVersion: 1, name: 'x', tempo: 120, rack: { components: [], connections: [] }, tracks: [{ id: 'trk_1', grid: ['C4', null] }] };
   const p = parseProject(raw);
-  return p.tracks[0].grid[0] && p.tracks[0].grid[0].note === 'C4' && p.tracks[0].grid[0].dur === 1;
+  const loop = p.tracks[0].clips.find(c => c.start === 0);
+  return !!loop && loop.events.length === 1 && loop.events[0].note === 'C4' && loop.events[0].dur === 120
+    && !('grid' in p.tracks[0]);
 });
 
 check('normalizeCell handles string, object, and null', () => {
@@ -169,7 +177,7 @@ check('parseProject fills missing defaults without throwing', () => {
     && Array.isArray(p.rack.components)
     && p.tracks.length === 1
     && p.tracks[0].wave === 'square'
-    && p.tracks[0].grid.length === 16
+    && Array.isArray(p.tracks[0].clips)
     && p.activeTrackId === 'trk_1';
 });
 
@@ -182,8 +190,8 @@ check('validateProject rejects future schemaVersion', () => {
   try { validateProject(p); return false; } catch (e) { return true; }
 });
 
-check('validateTrack rejects missing rt array', () => {
-  try { validateTrack({ id: 'trk_1', grid: [] }); return false; } catch (e) { return true; }
+check('validateTrack accepts tracks without legacy grid/rt', () => {
+  return validateTrack({ id: 'trk_1', clips: [] }) === true;
 });
 
 check('validateComponent rejects missing id', () => {
@@ -210,7 +218,7 @@ check('fromLegacy merges autosave rack + tracks store', () => {
     tracksStore: {
       tempo: 140,
       activeTrackId: 'trk_b',
-      tracks: [defaultTrackData({ id: 'trk_a' }), defaultTrackData({ id: 'trk_b', grid: ['C4'] })],
+      tracks: [defaultTrackData({ id: 'trk_a' }), { id: 'trk_b', grid: ['C4'] }],
     },
     id: 'proj_legacy',
   });
@@ -221,7 +229,7 @@ check('fromLegacy merges autosave rack + tracks store', () => {
     && project.tempo === 140
     && project.tracks.length === 2
     && project.activeTrackId === 'trk_b'
-    && project.tracks[1].grid[0].note === 'C4';
+    && project.tracks[1].clips.some(c => c.start === 0 && c.events.some(e => e.note === 'C4'));
 });
 
 check('fromLegacy handles missing sections', () => {
@@ -233,9 +241,9 @@ check('fromLegacy handles missing sections', () => {
     && project.activeTrackId === null;
 });
 
-check('defaultTrackData produces a full-length grid', () => {
+check('defaultTrackData carries clips and no legacy backing', () => {
   const t = defaultTrackData({ id: 'trk_x' });
-  return t.grid.length === 16 && t.rt.length === 0 && t.adsr.a === 0.01;
+  return Array.isArray(t.clips) && !('grid' in t) && !('rt' in t) && t.adsr.a === 0.01;
 });
 
 check('emptyGrid returns 16 nulls', () => {

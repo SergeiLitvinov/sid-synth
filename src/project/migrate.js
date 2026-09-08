@@ -1,5 +1,5 @@
-import { SCHEMA_VERSION, defaultProject, defaultTrackData } from './defaultProject.js';
-import { parseProject, normalizeCell, normalizeClip } from './serialize.js';
+import { SCHEMA_VERSION, defaultProject } from './defaultProject.js';
+import { parseProject, normalizeTrackData } from './serialize.js';
 
 // --- migration ------------------------------------------------------------
 // Bump a project document to the current schema version. Accepts an object or
@@ -18,7 +18,7 @@ export function migrateProject(input) {
     project = parseProject(project);
     project.schemaVersion = SCHEMA_VERSION;
   }
-  return project;
+  return parseProject(project);
 }
 
 // --- legacy import --------------------------------------------------------
@@ -49,7 +49,7 @@ export function fromLegacy({ autosave, tracksStore, id, name } = {}) {
   const legacyTempo = store && typeof store.tempo === 'number' ? store.tempo : (store && store.bpm);
   if (typeof legacyTempo === 'number' && legacyTempo > 0) project.tempo = legacyTempo;
   if (Array.isArray(store && store.tracks)) {
-    project.tracks = store.tracks.map(t => normalizeLegacyTrack(t));
+    project.tracks = store.tracks.map(t => normalizeLegacyTrack(t, legacyTempo));
   }
   project.activeTrackId = store && store.activeTrackId
     ? store.activeTrackId
@@ -57,36 +57,8 @@ export function fromLegacy({ autosave, tracksStore, id, name } = {}) {
   return migrateProject(project);
 }
 
-function normalizeLegacyTrack(t) {
-  const base = defaultTrackData();
-  const src = t && typeof t === 'object' ? t : {};
-  const grid = Array.isArray(src.grid) ? src.grid.map(normalizeCell) : base.grid;
-  const rt = Array.isArray(src.rt) ? src.rt.map(n => ({ note: n.note, start: n.start, dur: n.dur })) : [];
-  const clips = Array.isArray(src.clips) ? src.clips.map(normalizeClip) : [];
-  return {
-    id: typeof src.id === 'string' && src.id ? src.id : base.id,
-    name: typeof src.name === 'string' ? src.name : base.name,
-    color: typeof src.color === 'string' ? src.color : base.color,
-    enabled: src.enabled !== false,
-    monitor: src.monitor !== false,
-    height: typeof src.height === 'number' ? src.height : base.height,
-    folder: typeof src.folder === 'string' && src.folder ? src.folder : null,
-    collapsed: src.collapsed === true,
-    wave: typeof src.wave === 'string' ? src.wave : base.wave,
-    filterType: typeof src.filterType === 'string' ? src.filterType : base.filterType,
-    filterFreq: typeof src.filterFreq === 'number' ? src.filterFreq : base.filterFreq,
-    filterQ: typeof src.filterQ === 'number' ? src.filterQ : base.filterQ,
-    adsr: src.adsr && typeof src.adsr === 'object' ? { ...base.adsr, ...src.adsr } : base.adsr,
-    volume: typeof src.volume === 'number' ? src.volume : base.volume,
-    gridNote: typeof src.gridNote === 'string' ? src.gridNote : base.gridNote,
-    gridDur: typeof src.gridDur === 'number' && src.gridDur > 0 ? src.gridDur : base.gridDur,
-    midiChannel: typeof src.midiChannel === 'number' ? src.midiChannel : null,
-    grid,
-    rt,
-    clips,
-    inserts: Array.isArray(src.inserts)
-      ? src.inserts.filter(i => i && typeof i === 'object' && typeof i.type === 'string')
-        .map(i => ({ id: typeof i.id === 'string' && i.id ? i.id : 'ins_' + Math.random().toString(36).slice(2, 8), type: i.type, params: i.params && typeof i.params === 'object' ? { ...i.params } : {} }))
-      : base.inserts,
-  };
+function normalizeLegacyTrack(t, bpm) {
+  // Legacy grid/rt fold into a loop clip inside normalizeTrackData; the
+  // pre-project store tempo keeps rt seconds conversion accurate.
+  return normalizeTrackData(t, { bpm });
 }

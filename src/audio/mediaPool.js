@@ -29,7 +29,7 @@ function extOf(name) {
   return dot >= 0 ? s.slice(dot + 1).toLowerCase() : '';
 }
 
-export function createMediaPool({ container, ctx, destination, store, getAssets, setAssets, onAddClip } = {}) {
+export function createMediaPool({ container, ctx, destination, store, getAssets, setAssets, onAddClip, isReferenced } = {}) {
   const el = container;
   el.classList.add('media-pool');
   const audioStore = store || createAssetStore();
@@ -205,6 +205,10 @@ export function createMediaPool({ container, ctx, destination, store, getAssets,
   }
 
   async function removeAsset(hash) {
+    if (isReferenced?.(hash)) {
+      setStatus('Audio is used by a clip. Remove the clip before deleting its source.');
+      return false;
+    }
     if (playingHash === hash) previewStop();
     await audioStore.remove(hash);
     buffers.delete(hash);

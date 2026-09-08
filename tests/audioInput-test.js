@@ -292,6 +292,10 @@ check('take placement compensates effective latency', async () => {
   const el = document.createElement('div');
   container.appendChild(el);
   const ctx = new AudioContext();
+  // A device's latency estimate can change between finalize and assertion.
+  // Test placement against a fixed measured value; capture remains real.
+  Object.defineProperty(ctx, 'baseLatency', { value: 0.01 });
+  Object.defineProperty(ctx, 'outputLatency', { value: 0.02 });
   const store = createAssetStore({ dbName: 'sid-synth-assets-lat-test' });
   await store.open();
   await store.clear();

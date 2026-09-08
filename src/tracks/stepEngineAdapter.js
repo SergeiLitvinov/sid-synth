@@ -1,6 +1,6 @@
 // Adapter that drives an existing TrackEngine from a unified Transport.
-// The engine keeps owning its voices and its internal scheduler (grid + rt
-// note scheduling, cursor, realtime buffers); the transport owns the clock,
+// The engine keeps owning its voices and its internal scheduler (clip-event
+// scheduling, cursor, realtime buffers); the transport owns the clock,
 // the timer and the musical position. The engine's _tick is hooked into the
 // transport's scheduler passes so one clock drives everything.
 
@@ -20,9 +20,6 @@ export function createStepEngineAdapter(engine, transport) {
     engine._playStartCtx = transport._playStartCtx;
     engine._cursorLoopAbs = transport._playStartCtx;
     engine._resetLinearPlayback();
-    engine.tracks.forEach(t => {
-      t.rt.forEach(ev => { ev._nextAbs = engine._playStartCtx + ev.start; });
-    });
   });
 
   transport.onStop(() => {
@@ -55,12 +52,6 @@ export function createStepEngineAdapter(engine, transport) {
     // ...then immediately retire the finished ones, so the scheduler does
     // not replay them from the top (it cannot tell a seek from jitter).
     if (typeof engine._markPastLinear === 'function') engine._markPastLinear(pos);
-    // Reset RT event pointers to the new loop-relative position.
-    engine.tracks.forEach(t => {
-      t.rt.forEach(ev => {
-        ev._nextAbs = engine._playStartCtx + engine._loopPos + ev.start;
-      });
-    });
     // Chase: re-trigger sustained notes at the new position.
     engine.chaseToTick(pos);
   });
@@ -91,10 +82,7 @@ export function createStepEngineAdapter(engine, transport) {
   // Route the engine's own transport commands through the unified transport.
   engine.play = () => transport.play();
   engine.record = () => {
-    if (!engine._armed.size && engine.activeTrackId) engine.armTrack(engine.activeTrackId, true);
-    engine._recording = true;
-    engine._recBuffer.clear();
-    engine.tracks.forEach(t => t.rt.forEach(ev => delete ev._open));
+    engine.prepareRecording();
     transport.record();
   };
   engine.stop = () => transport.stop();

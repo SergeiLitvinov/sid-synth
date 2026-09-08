@@ -4,5 +4,24 @@
 <body>
   <ul id="results"></ul>
   <div id="summary"></div>
+  <script type="module">
+    const suite = new URLSearchParams(location.search).get('suite');
+    if (suite && /^[a-zA-Z0-9-]+$/.test(suite)) {
+      const frame = document.createElement('iframe');
+      frame.src = './' + suite + '.html';
+      document.body.append(frame);
+      const started = performance.now();
+      const timer = setInterval(async () => {
+        const doc = frame.contentDocument;
+        const summary = doc?.getElementById('summary')?.textContent.trim();
+        if (!summary && performance.now() - started < 40000) return;
+        clearInterval(timer);
+        const failures = [...(doc?.querySelectorAll('#results li') || [])]
+          .map(el => el.textContent).filter(text => text.startsWith('FAIL'));
+        document.getElementById('summary').textContent = summary || 'Timed out';
+        await fetch('/__results/' + suite, { method: 'POST', body: JSON.stringify({ summary, failures }) });
+      }, 100);
+    }
+  </script>
 </body>
 </html>
