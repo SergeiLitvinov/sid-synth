@@ -1337,6 +1337,75 @@ check('crossfadeClipsCommand no-ops without overlap or audio', () => {
   return okAbut && okNoAudio;
 });
 
+// --- pattern clip selection (P0: pattern by stable clip ID) ----------------
+check('step scheduler follows the selected clip, not position zero', () => {
+  const d = makeFixture(120);
+  const a = d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  const b = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'E4', start: 0, dur: 120 }] });
+  d.engine.selectStepClip('trk_a', b.id);
+  d.play();
+  for (let i = 0; i < 25; i++) d.advanceAndTick(100); // 2.5s: past one loop
+  const e4 = d.spy.filter(s => s.note === 'E4').length;
+  const c4 = d.spy.filter(s => s.note === 'C4').length;
+  d.engine.selectStepClip('trk_a', a.id);
+  for (let i = 0; i < 20; i++) d.advanceAndTick(100); // 2 more seconds
+  const c4After = d.spy.filter(s => s.note === 'C4').length;
+  return e4 >= 1 && c4 === 0 && c4After >= 1;
+});
+check('selected arranged clip plays looped, never linear (no double)', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  const b = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'E4', start: 0, dur: 120 }] });
+  d.engine.selectStepClip('trk_a', b.id);
+  d.play();
+  for (let i = 0; i < 40; i++) d.advanceAndTick(100); // 4.0s = two loops
+  const e4 = d.spy.filter(s => s.note === 'E4').map(s => Math.round(s.at * 1000));
+  const unique = new Set(e4);
+  // Loop-periodic hits only (a linear double would share a timestamp), no C4.
+  return e4.length >= 2 && unique.size === e4.length && d.spy.every(s => s.note !== 'C4');
+});
+check('recording writes into the selected step clip', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const b = d.engine.addClip('trk_a', { start: 1920, length: 1920 });
+  d.engine.selectStepClip('trk_a', b.id);
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('G3');
+  d.advanceAndTick(200);
+  d.engine.noteOff('G3');
+  d.engine.stop();
+  const aEvents = d.track.clips.find(c => c.start === 0).events;
+  const bEvents = d.track.clips.find(c => c.id === b.id).events;
+  return aEvents.length === 0 && bEvents.length === 1 && bEvents[0].note === 'G3';
+});
+check('REPLACE clears the selected step clip, keeps the other', () => {
+  const d = makeFixture(120);
+  const a = d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  const b = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'E4', start: 0, dur: 120 }] });
+  d.engine.selectStepClip('trk_a', b.id);
+  d.engine.recordMode = 'replace';
+  d.record();
+  const ra = d.engine.byId.trk_a.clips.find(c => c.id === a.id).events;
+  const rb = d.engine.byId.trk_a.clips.find(c => c.id === b.id).events;
+  d.engine.stop();
+  return ra.length === 1 && ra[0].note === 'C4' && rb.length === 0;
+});
+check('chase follows the selected clip, silent start-0 stays silent', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 960 }] });
+  const b = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'E4', start: 0, dur: 120 }] });
+  d.engine.selectStepClip('trk_a', b.id);
+  d.play();
+  d.spy.length = 0;
+  // Tick 100 maps to loop position 100: selected E4 (0..120) is sounding
+  // and chases; the unselected start-0 C4 must not (no phantom).
+  d.engine.chaseToTick(100);
+  if (d.spy.length !== 1 || d.spy[0].note !== 'E4') return false;
+  d.engine.chaseToTick(2000); // loop-relative 80, still inside selected E4
+  return d.spy.length === 2 && d.spy.every(s => s.note === 'E4');
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';

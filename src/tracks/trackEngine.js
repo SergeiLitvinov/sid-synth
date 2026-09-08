@@ -509,8 +509,9 @@ export function createTrackEngine(ctx, dest, config = {}) {
   engine._markPastLinear = (absTick) => {
     engine.tracks.forEach(t => {
       const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
+      const stepClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
       (t.clips || []).forEach(clip => {
-        if (clip === loopClip) return;
+        if (clip === loopClip || clip === stepClip) return;
         (clip.events || []).forEach(ev => {
           const evStart = typeof ev.start === 'number' ? ev.start : 0;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
@@ -538,8 +539,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const loopLenTicks = STEPS_PER_LOOP * (engine.ppq / 4);
     engine.tracks.forEach(t => {
       if (engine.byId[t.id].enabled === false) return;
-      const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
-      // Loop clip: check events against loop-relative position (ticks)
+      // Step clip loop region: check events against loop-relative position.
+      const loopClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
       if (loopClip) {
         const loopPosTicks = absTick % loopLenTicks;
         (loopClip.events || []).forEach(ev => {
@@ -552,9 +553,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
           }
         });
       }
-      // Arranged clips: check events against absolute position (ticks)
+      // Arranged clips: check events against absolute position (ticks).
+      // The step clip is chased loop-relative above; the start-0 clip never
+      // sounds in pattern mode, so chasing it would conjure phantom notes.
       (t.clips || []).forEach(clip => {
         if (clip === loopClip) return;
+        if (engine.playbackMode === 'pattern' && clip.start === 0) return;
         (clip.events || []).forEach(ev => {
           const evStart = typeof ev.start === 'number' ? ev.start : 0;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
@@ -755,7 +759,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
             return { ...e, start: qd / tps };
           });
         }
-        let clip = t.clips.find(c => c.start === 0);
+        let clip = engine.getStepClip(trackId);
         if (!clip) clip = engine.addClip(t.id, { start: 0 });
         if (clip) {
           clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
@@ -765,11 +769,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._recBuffer.clear();
   }
 
-  // Clear the loop (start-0) clip so a REPLACE-mode record starts empty —
+  // Clear the selected step clip so a REPLACE-mode record starts empty —
   // the same clip _commitBuffer writes the take into.
   function _clearLoopClip(t) {
     if (!t) return;
-    const clip = (t.clips || []).find(c => c.start === 0);
+    const clip = engine.getStepClip(t.id);
     if (clip) engine.setClipEvents(t.id, clip.id, []);
   }
 
@@ -818,21 +822,21 @@ export function createTrackEngine(ctx, dest, config = {}) {
     };
 
     // --- grid (cursor keeps monotonic advance across loops) ---
-    // Reads loop-clip events only: without a start-0 clip there is nothing
-    // step-scheduled (legacy grid/rt backing folds into a clip on load).
+    // Plays the selected step clip by stable ID (P0 pattern model): the
+    // selection falls back to the start-0 clip, then the first available.
     let gridLoopAbs = engine._cursorLoopAbs + Math.floor(engine._cursor / STEPS_PER_LOOP) * engine.loopDur;
     // cursor is always < STEPS_PER_LOOP, so gridLoopAbs === _cursorLoopAbs;
     while (gridLoopAbs + engine._cursor * engine.stepDur < endAbs) {
       const timeAbs = gridLoopAbs + engine._cursor * engine.stepDur;
       engine.tracks.forEach(t => {
         if (engine.playbackMode === 'song') return;
-        const loopClip = t.clips.find(c => c.start === 0);
-        if (!loopClip) return;
+        const stepClip = engine.getStepClip(t.id);
+        if (!stepClip) return;
         const step = engine.ppq / 4;
         const tps = ticksPerSecond(engine.bpm, engine.ppq);
-        loopClip.events.forEach(ev => {
-          if (ev.start >= engine._cursor * step && ev.start < (engine._cursor + 1) * step && ev.start < loopClip.length) {
-            const duration = Math.min(ev.dur, loopClip.length - ev.start) / tps;
+        stepClip.events.forEach(ev => {
+          if (ev.start >= engine._cursor * step && ev.start < (engine._cursor + 1) * step && ev.start < stepClip.length) {
+            const duration = Math.min(ev.dur, stepClip.length - ev.start) / tps;
             if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + ev.start / tps, duration, ev.velocity);
           }
         });
@@ -847,16 +851,18 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
 
     // --- arranged clips (backlog #24): linear full-song playback ---------
-    // Every clip except the loop mirror (the one the grid/rt loop scheduler
-    // plays) sounds its events once, positioned at clip.start + ev.start ticks
-    // (constant tempo). Events are only scheduled once per play via the
-    // per-event _scheduledLin flag; late passes (timer jitter) catch up by
-    // scheduling into the past, which the Web Audio clock plays immediately.
+    // Every clip except the loop mirror and the selected step clip (both
+    // played by the step loop in pattern mode) sounds its events once,
+    // positioned at clip.start + ev.start ticks (constant tempo). Events are
+    // only scheduled once per play via the per-event _scheduledLin flag;
+    // late passes (timer jitter) catch up by scheduling into the past,
+    // which the Web Audio clock plays immediately.
     const tps = ticksPerSecond(engine.bpm, engine.ppq);
     engine.tracks.forEach(t => {
       const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
+      const stepClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
       (t.clips || []).forEach(clip => {
-        if (clip === loopClip) return;
+        if (clip === loopClip || clip === stepClip) return;
         (clip.events || []).forEach(ev => {
           if (ev._scheduledLin) return;
           const absTicks = clip.start + (typeof ev.start === 'number' ? ev.start : 0);
