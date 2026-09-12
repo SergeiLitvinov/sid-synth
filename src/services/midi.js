@@ -12,17 +12,18 @@ import { noteForMidi } from './notes.js';
 //   refreshInputs()   — re-enumerate available MIDI devices
 //   getInputs()       — list available devices
 //   setCallbacks(obj) — { onNoteOn, onNoteOff, onCC, onPitchBend,
-//                         onPressure, onPanic, onDeviceLost }
+//                         onPressure, onProgram, onPanic, onDeviceLost }
 //   destroy()         — disconnect all handlers
 //
 // CC callback: onCC(channel, cc, value, deviceId) — cc is 0-127, value 0-127
 // Pitch bend: onPitchBend(channel, value, deviceId) — value is -1.0..1.0
 // Channel pressure: onPressure(channel, value, deviceId) — value 0..1.
 //   Without an onPressure callback it aliases to CC1 (legacy behavior).
+// Program change: onProgram(channel, program, deviceId) — program 0-127.
 // Panic: CC123 (all notes off) calls onPanic(channel, deviceId).
 // Disconnect: onDeviceLost(deviceId, [{ channel, note }]) lists notes that
 //   were held from the removed device and never got a note-off.
-export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onPitchBend, onPressure, onPanic, onDeviceLost }) {
+export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onPitchBend, onPressure, onProgram, onPanic, onDeviceLost }) {
   let midiAccess = null;
   let selectedDeviceId = null;
   const subscribers = new Set();
@@ -31,6 +32,7 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
   let onCCCb = onCC || (() => {});
   let onPitchBendCb = onPitchBend || (() => {});
   let onPressureCb = onPressure || null;
+  let onProgramCb = onProgram || (() => {});
   let onPanicCb = onPanic || (() => {});
   let onDeviceLostCb = onDeviceLost || (() => {});
   // deviceId -> Map("channel:note" -> { channel, note }) of held notes.
@@ -97,6 +99,11 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
     if (status === 0xD0) {
       if (onPressureCb) onPressureCb(channel, data1 / 127, deviceId);
       else onCCCb(channel, 1, data1, deviceId); // legacy CC1 alias
+      return;
+    }
+    // Program change: single data byte, 0-127.
+    if (status === 0xC0) {
+      onProgramCb(channel, data1, deviceId);
       return;
     }
   }
@@ -203,6 +210,7 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
       if (cbs.onCC) onCCCb = cbs.onCC;
       if (cbs.onPitchBend) onPitchBendCb = cbs.onPitchBend;
       if (cbs.onPressure) onPressureCb = cbs.onPressure;
+      if (cbs.onProgram) onProgramCb = cbs.onProgram;
       if (cbs.onPanic) onPanicCb = cbs.onPanic;
       if (cbs.onDeviceLost) onDeviceLostCb = cbs.onDeviceLost;
     },

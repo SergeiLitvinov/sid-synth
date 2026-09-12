@@ -1781,6 +1781,70 @@ check('recorded bend and mod replay with the scheduled note', () => {
   return bends.some(v => v === 0.5) && mods.some(v => Math.abs(v - 64 / 127) < 1e-9);
 });
 
+// ---- CC/program/expression/pedal chase (P0) -------------------------------------
+check('new voices inherit the live mod opening', () => {
+  const d = makeFixture(120);
+  d.engine.updateTrack('trk_a', { filterType: 'lowpass', filterFreq: 1200 });
+  d.engine.routeCC(1, 1, 127); // mod wheel up before the attack
+  d.engine.noteOn('C4');
+  const v = d.track.voice;
+  const freq = v.voices.find(x => x.activeNote === 'C4')?.filter?.frequency?.value;
+  return freq > 1200;
+});
+check('chase holds the retriggered note while the pedal is down', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 240, dur: 720 }] });
+  d.engine._playing = true;
+  d.engine.routeCC(1, 64, 127); // pedal down
+  d.engine.chaseToTick(480); // inside C4 (240..960)
+  const v = d.track.voice;
+  const live = v.voices.find(x => x.activeNote === 'C4');
+  const held = !!live && live.busyUntil === Infinity;
+  d.engine.routeCC(1, 64, 0); // pedal up releases it
+  const released = !v.voices.some(x => x.activeNote === 'C4');
+  d.engine._playing = false;
+  return held && released;
+});
+check('program change selects the wave and takes replay it on chase', () => {
+  const d = makeFixture(120);
+  d.engine.routeProgram(1, 2);
+  if (d.track.wave !== 'triangle') return false;
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('C4');
+  d.advanceAndTick(250);
+  d.engine.noteOff('C4');
+  d.engine.stop();
+  const ev = d.track.clips.find(c => c.start === 0).events[0];
+  if (!ev || ev.pgm !== 'triangle') return false;
+  d.track.wave = 'square';
+  let chased = 0;
+  const origOn = d.track.voice.noteOn.bind(d.track.voice);
+  d.track.voice.noteOn = (note, at, dur, vel) => { if (note === 'C4') chased++; origOn(note, at, dur, vel); };
+  d.engine._playing = true;
+  d.engine.chaseToTick(600); // inside C4 (480..720)
+  const ok = d.track.wave === 'triangle' && chased === 1;
+  d.engine._playing = false;
+  return ok;
+});
+check('take notes outlive note-off while sustained, close on pedal-up', () => {
+  const d = makeFixture(120);
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('C4');
+  d.engine.routeCC(1, 64, 127); // pedal down
+  d.advanceAndTick(250);
+  d.engine.noteOff('C4'); // voice rings on; take stays open
+  const ringing = d.track.voice.voices.some(x => x.activeNote === 'C4');
+  const buf = d.engine._recBuffer.get('trk_a') || [];
+  const open = ringing && buf.length === 1 && buf[0].dur === null;
+  d.advanceAndTick(250); // now at 1.0s
+  d.engine.routeCC(1, 64, 0); // pedal up closes the take note
+  d.engine.stop();
+  const ev = d.track.clips.find(c => c.start === 0).events[0];
+  return open && ev && Math.abs(ev.dur - 480) < 60;
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';

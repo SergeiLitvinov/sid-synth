@@ -46,6 +46,7 @@ export function rtToClipEvents(rt, { bpm = 120, ppq = DEFAULT_PPQ } = {}) {
     ...(typeof ev.bend === 'number' && ev.bend !== 0 ? { bend: ev.bend } : {}),
     ...(typeof ev.mod === 'number' && ev.mod > 0 ? { mod: ev.mod } : {}),
     ...(typeof ev.pressure === 'number' && ev.pressure > 0 ? { pressure: ev.pressure } : {}),
+    ...(typeof ev.pgm === 'string' && ev.pgm ? { pgm: ev.pgm } : {}),
     // Pre-quantize ticks survive the conversion untouched (reversible take).
     ...(typeof ev.rawStart === 'number' ? { rawStart: ev.rawStart } : {}),
   }));

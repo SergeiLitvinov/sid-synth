@@ -611,7 +611,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
             const remainingTicks = evStart + Math.min(evDur, loopClip.length - evStart) - loopPosTicks;
             const durSec = remainingTicks / tps;
             _applyNoteExpression(t, ev);
-            t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
+            _applyNoteProgram(t, ev);
+            // Live pedal down: hold the retrigger open (pedal-up releases it
+            // through the voice) instead of cutting it at the take length.
+            if (t.voice.getSustain()) {
+              t.voice.noteOn(ev.note, nowAbs, undefined, ev.velocity);
+              t.voice.holdForSustain(ev.note);
+            } else t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
           }
         });
       }
@@ -632,7 +638,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
             const remainingTicks = absEnd - absTick;
             const durSec = remainingTicks / tps;
             _applyNoteExpression(t, ev);
-            t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
+            _applyNoteProgram(t, ev);
+            if (t.voice.getSustain()) {
+              t.voice.noteOn(ev.note, nowAbs, undefined, ev.velocity);
+              t.voice.holdForSustain(ev.note);
+            } else t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
             ev._scheduledLin = true;
           }
         });
@@ -735,7 +745,18 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const norm = value / 127; // 0..1
     matching.forEach(t => {
       if (cc === 1) t.voice.modulation(norm);           // CC1: modulation → filter
-      else if (cc === 64) t.voice.sustain(norm >= 0.5); // CC64: sustain pedal
+      else if (cc === 64) {                             // CC64: sustain pedal
+        const was = t.voice.getSustain();
+        t.voice.sustain(norm >= 0.5);
+        // Pedal up closes take notes that outlived their note-off (P0 chase):
+        // the take holds what the pedal held.
+        if (was && norm < 0.5) {
+          const buf = engine._recBuffer.get(t.id) || [];
+          buf.forEach(e => {
+            if (e.dur === null && e.sustainHeld) { e.sustainHeld = false; _closeBufferEvent(e); }
+          });
+        }
+      }
       else if (cc === 7) { t.volume = norm; _applyAudibility(); }         // CC7: volume → fader
     });
   };
@@ -745,6 +766,17 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const tracks = engine.tracks;
     const matching = tracks.filter(t => t.midiChannel === null || t.midiChannel === channel);
     matching.forEach(t => t.voice.pitchBend(value));
+  };
+
+  // Route MIDI program change to matching tracks: selects the track
+  // waveform (new attacks pick it up; sounding voices keep theirs until
+  // retriggered). Direct track write like CC7 — no undo entry, live control.
+  engine.routeProgram = (channel, program) => {
+    const waves = ['square', 'sawtooth', 'triangle', 'sine', 'noise'];
+    const wave = waves[((program | 0) % waves.length + waves.length) % waves.length];
+    const tracks = engine.tracks;
+    const matching = tracks.filter(t => t.midiChannel === null || t.midiChannel === channel);
+    matching.forEach(t => { t.wave = wave; });
   };
 
   // Route MIDI channel pressure (aftertouch) to matching tracks.
@@ -782,6 +814,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (typeof ev.bend === 'number' && ev.bend !== 0) t.voice.pitchBend(ev.bend);
     if (typeof ev.mod === 'number' && ev.mod > 0) t.voice.modulation(ev.mod);
     if (typeof ev.pressure === 'number' && ev.pressure > 0) t.voice.pressure(ev.pressure);
+  }
+
+  // Replay a recorded program (waveform) ahead of its note. Last-wins like
+  // live program changes; skipped when already selected.
+  function _applyNoteProgram(t, ev) {
+    if (!ev || typeof ev.pgm !== 'string' || !ev.pgm) return;
+    if (t.wave !== ev.pgm) t.wave = ev.pgm;
   }
 
   // ---- piano roll audition (backlog #30) ----------------------------------
@@ -829,6 +868,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       bend: t.voice.getPitchBend(),
       mod: t.voice.getModulation(),
       pressure: t.voice.getPressure(),
+      pgm: t.wave || null,
       // Absolute take time only exists on a running clock; direct
       // _recording pokes without playback keep the loop-relative stamp.
       absStart: engine._playing ? _songTicksNow() : null, absEnd: null,
@@ -849,6 +889,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
       }
     }
     if (idx < 0) return;
+    // Sustain pedal down: the voice keeps ringing, so the take stays open
+    // until the pedal comes up (closed in routeCC) or the take finalizes.
+    if (t.voice.getSustain()) {
+      buf[idx].sustainHeld = true;
+      return;
+    }
     _closeBufferEvent(buf[idx]);
   }
 
@@ -963,6 +1009,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     let out = closed.map(e => ({
       note: e.note, start: e.start, dur: e.dur, velocity: e.velocity, channel: e.channel,
       device: e.device, bend: e.bend, mod: e.mod, pressure: e.pressure,
+      pgm: (typeof e.pgm === 'string' && e.pgm && e.pgm !== 'square') ? e.pgm : undefined,
     }));
     if (engine.recordQuantize) {
       const q = engine.recordQuantize;
@@ -1014,6 +1061,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
         if (typeof e.bend === 'number' && e.bend !== 0) ev.bend = e.bend;
         if (typeof e.mod === 'number' && e.mod > 0) ev.mod = e.mod;
         if (typeof e.pressure === 'number' && e.pressure > 0) ev.pressure = e.pressure;
+        if (typeof e.pgm === 'string' && e.pgm && e.pgm !== 'square') ev.pgm = e.pgm;
         return ev;
       });
     if (engine.recordQuantize) {
@@ -1155,6 +1203,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
             const duration = Math.min(ev.dur, stepClip.length - pos) / tps;
             if (duration > 0) {
               _applyNoteExpression(t, ev);
+              _applyNoteProgram(t, ev);
               scheduleNoteOn(t, ev.note, gridLoopAbs + pos / tps, duration, ev.velocity);
             }
           }
@@ -1209,9 +1258,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
           }
           if (durTicks > 0) {
             _applyNoteExpression(t, ev);
+            _applyNoteProgram(t, ev);
             scheduleNoteOn(t, ev.note, timeAbs, durTicks / tps, ev.velocity);
           } else {
             _applyNoteExpression(t, ev);
+            _applyNoteProgram(t, ev);
             scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
           }
           ev._scheduledLin = true;

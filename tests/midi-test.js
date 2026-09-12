@@ -137,6 +137,14 @@ check('selectDevice scopes input, destroy unbinds handlers', async () => {
   return scoped && routed && unbound;
 });
 
+check('program change calls onProgram with the device id', async () => {
+  const pgm = [];
+  const t = await bootApi({ onProgram: (ch, p, dev) => pgm.push([ch, p, dev]) });
+  t.access.inputs.get('devB').onmidimessage({ data: [0xC2, 5, 0] });
+  closeApi(t);
+  return pgm.length === 1 && pgm[0].join(',') === '3,5,devB';
+});
+
 (async () => {
   for (const t of queue) {
     try {

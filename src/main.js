@@ -70,6 +70,9 @@ import { createInputUI } from './audio/inputUI.js';
     onPressure: (channel, value) => {
       if (trackEngine) trackEngine.routePressure(channel, value);
     },
+    onProgram: (channel, program) => {
+      if (trackEngine) trackEngine.routeProgram(channel, program);
+    },
     onPanic: () => {
       if (trackEngine) trackEngine.panic();
     },

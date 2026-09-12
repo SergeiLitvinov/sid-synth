@@ -195,6 +195,12 @@ export class TrackVoices {
         try { v.filter.frequency.setValueAtTime(20000, at); } catch (e) {}
         try { v.filter.Q.setValueAtTime(0, at); } catch (e) {}
       }
+      // New attacks inherit the live wheel/aftertouch opening (P0 chase):
+      // without this a seek/chase retrigger plays at the track default
+      // while the performance was recorded/played with the filter open.
+      if (this._modulation > 0 || this._pressure > 0) {
+        try { v.filter.frequency.setValueAtTime(this._filterTarget(fp ? fp.freq : 20000), at); } catch (e) {}
+      }
     }
     if (v.osc && v.osc.frequency) {
       try { v.osc.frequency.setValueAtTime(freq, at); } catch (e) {}
@@ -241,6 +247,15 @@ export class TrackVoices {
     v.busyUntil = at + this.track.adsr.r + 0.01;
     v.activeNote = null;
     v.velScale = undefined;
+  }
+
+  // Flag an open voice as pedal-held (chase path): a seek/chase retrigger
+  // has no finger behind it, so pedal-up must release it — unlike a live
+  // attack, which keeps ringing while its key is still down.
+  holdForSustain(note) {
+    const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
+    const v = this.voices.find(x => x.activeNote === resolve(note) && !x._sustainHeld);
+    if (v) v._sustainHeld = true;
   }
 
   allOff(at) {
@@ -295,16 +310,21 @@ export class TrackVoices {
   }
 
   _applyFilterMod() {
-    const eff = Math.max(this._modulation, this._pressure);
     const now = this.ctx.currentTime;
     const fp = this._filterParams();
     this.voices.forEach(v => {
       if (v.filter) {
         const base = fp ? fp.freq : 20000;
-        const target = base + eff * (20000 - base);
-        try { v.filter.frequency.setTargetAtTime(target, now, 0.02); } catch (e) {}
+        try { v.filter.frequency.setTargetAtTime(this._filterTarget(base), now, 0.02); } catch (e) {}
       }
     });
+  }
+
+  // Combined mod/pressure target so newly armed voices open the filter to
+  // the current wheel/aftertouch position (chase + fresh attacks), not just
+  // voices that were sounding when the CC arrived.
+  _filterTarget(base) {
+    return base + Math.max(this._modulation, this._pressure) * (20000 - base);
   }
 
   // Sustain pedal (CC64, backlog #174): when held, noteOff does not release;
