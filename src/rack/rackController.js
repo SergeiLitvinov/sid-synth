@@ -13,12 +13,15 @@ import { createPatchFile } from '../services/patchFile.js';
 import { noteToFreq, resolveNote } from '../services/notes.js';
 import { captureParams, applyParams } from '../services/componentParams.js';
 
-export function createRackController({ ctx, masterGain }) {
+export function createRackController({ ctx, masterGain, transport = null }) {
   const rack = document.getElementById('rack');
   const svgEl = document.getElementById('connectionsSvg');
   const masterPortEl = document.getElementById('masterOutput');
   const components = {};
   let componentId = 0;
+  // Shared transport the rack sequencers follow (injected via setTransport
+  // because the transport is created after the rack in main.js).
+  let sharedTransport = transport || null;
 
   const router = createRouter({ components, masterGain, rack, svgEl, masterPortEl });
 
@@ -101,6 +104,7 @@ export function createRackController({ ctx, masterGain }) {
     // Sequencer note hook (scheduled on the Web Audio timeline)
     if (comp.type === 'sequencer' && comp.seq) {
       comp.seq.onStep = (step, note, t0, dur) => { if (note) scheduleNote(note, t0, dur); };
+      if (sharedTransport && comp.attachTransport) comp.attachTransport(sharedTransport);
     }
 
     // Close button handler
@@ -124,6 +128,16 @@ export function createRackController({ ctx, masterGain }) {
 
   let dragRAF = null;
   let dragState = null;
+
+  // Attach the shared transport to every rack sequencer (existing + future).
+  // Global Play/Stop/Seek then drives the patterns; tempo comes from the
+  // project. Safe to call before any sequencer exists.
+  function setTransport(t) {
+    sharedTransport = t || null;
+    Object.values(components).forEach(comp => {
+      if (comp.type === 'sequencer' && comp.attachTransport) comp.attachTransport(sharedTransport);
+    });
+  }
 
   function makeDraggable(el) {
     let isDragging = false;
@@ -226,7 +240,8 @@ export function createRackController({ ctx, masterGain }) {
     oscIds.forEach(oscId => {
       const osc = components[oscId];
       if (osc.outputGain) {
-        osc.setFrequency(freq);
+        // Pitch changes at the scheduled note time, not at callback time.
+        osc.setFrequency(freq, t0);
         osc.outputGain.gain.setTargetAtTime(1, t0, 0.01);
         osc.outputGain.gain.setTargetAtTime(0, t0 + dur, 0.02);
       }
@@ -310,6 +325,6 @@ export function createRackController({ ctx, masterGain }) {
   patchStore.refreshPresetList();
 
 
-  return { rack, components, router, createComponent, clearRack, playNote, stopAll };
+  return { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport };
 }
 

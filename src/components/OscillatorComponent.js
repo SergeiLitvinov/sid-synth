@@ -106,10 +106,12 @@ export class OscillatorComponent extends AudioComponent {
     this.outputGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.02);
   }
 
-  setFrequency(freq) {
+  // `when` is an audio-context timestamp: the sequencer passes the scheduled
+  // note time so pitch changes land exactly on the note, not at callback time.
+  setFrequency(freq, when) {
     this.frequency = freq;
     if (this.node && this.node.frequency) {
-      this.node.frequency.setValueAtTime(freq, this.ctx.currentTime);
+      this.node.frequency.setValueAtTime(freq, when ?? this.ctx.currentTime);
     }
   }
 

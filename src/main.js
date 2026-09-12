@@ -41,7 +41,7 @@ import { createInputUI } from './audio/inputUI.js';
     analyserFreq,
   }).start();
 
-  const { rack, components, router, createComponent, clearRack, playNote, stopAll } = createRackController({ ctx, masterGain });
+  const { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport } = createRackController({ ctx, masterGain });
 
   // Musical keyboard + MIDI
   let recNoteOn = null, recNoteOff = null;
@@ -97,6 +97,9 @@ import { createInputUI } from './audio/inputUI.js';
   });
   const transport = createTransport({ ctx: recorderCtx, bpm: trackEngine.bpm });
   createStepEngineAdapter(trackEngine, transport);
+  // Rack sequencers follow the shared transport (P0): global Play/Stop/Seek
+  // drives the patterns and project tempo sets the step rate.
+  setTransport(transport);
   const recorderUI = recorderEl
     ? createRecorderUI({ container: recorderEl, engine: trackEngine, history, exportWav, midiApi })
     : null;

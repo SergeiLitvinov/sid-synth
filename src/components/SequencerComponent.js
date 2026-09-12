@@ -30,6 +30,7 @@ export class SequencerComponent extends AudioComponent {
     inp1.type = 'number';
     inp1.value = 120;
     inp1.style.width = '55px';
+    inp1.title = 'Local tempo. Disabled while following the shared transport.';
     inp1.onchange = () => { this.seq.setBpm(+inp1.value); };
     row1.appendChild(inp1);
     body.appendChild(row1);
@@ -97,11 +98,26 @@ export class SequencerComponent extends AudioComponent {
 
   connect(dest) {
     if (this.seq && dest.playNote) {
-      this.seq.onStep = (step, note) => {
-        if (note) dest.playNote(note);
+      this.seq.onStep = (step, note, t0, dur) => {
+        if (note) dest.playNote(note, t0, dur);
       };
       this.isConnected = true;
     }
+  }
+
+  // Follow the shared transport: global Play/Stop/Seek drives the pattern and
+  // tempo comes from the project. The local BPM input is disabled while
+  // following (it stays as the standalone fallback after detach).
+  attachTransport(transport) {
+    this.seq.attachTransport(transport);
+    const bpmInput = this.element.querySelector('input[type="number"]');
+    if (bpmInput) bpmInput.disabled = !!transport;
+  }
+
+  detachTransport() {
+    this.seq.detachTransport();
+    const bpmInput = this.element.querySelector('input[type="number"]');
+    if (bpmInput) bpmInput.disabled = false;
   }
 
   dispose() {
