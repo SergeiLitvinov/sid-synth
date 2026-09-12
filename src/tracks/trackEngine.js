@@ -7,6 +7,7 @@ import {
   gridToClipEvents, rtToClipEvents, mergeClipEvents,
   stepTicks, ticksPerSecond,
 } from '../project/clipEvents.js';
+import { recordTakeCommand } from '../project/trackCommands.js';
 import { DEFAULT_PPQ } from '../project/musicalTime.js';
 import { normalizeAudioRef, createAudioEngine } from '../audio/audioEngine.js';
 
@@ -96,6 +97,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
     _recBuffer: new Map(), // trackId -> open events [{note,start,dur:null}]
     recordMode: config.recordMode || 'overdub', // 'overdub' | 'replace'
     recordQuantize: config.recordQuantize || null, // { grid, strength, swing } | null
+    // Undo history (createHistory, injected): a finished take is committed as
+    // one recordTakeCommand. Null = direct writes, no undo entries (tests).
+    history: config.history || null,
+    // Pre-take clip snapshots for the single-transaction take commit and for
+    // cancelTake. Map clipKey -> { trackId, clipId, before, geometry }.
+    // `before` is null when the take created the clip.
+    _takeBefore: null,
     // Clip audio playback (M4): injectable for tests, real engine otherwise.
     // Routes through each track's voice chain (inserts + fader), so mute/solo
     // and insert devices apply to audio exactly like they do to MIDI voices.
@@ -672,6 +680,8 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   engine.prepareRecording = () => {
     if (!engine._armed.size && engine.activeTrackId) engine.armTrack(engine.activeTrackId, true);
+    // Fresh take BEFORE the REPLACE clear so snapshots capture pre-take state.
+    engine._takeBefore = null;
     if (engine.recordMode === 'replace') {
       const ids = engine._armed.size ? [...engine._armed] : (engine.activeTrackId ? [engine.activeTrackId] : []);
       ids.forEach(id => _clearLoopClip(engine.byId[id]));
@@ -872,6 +882,26 @@ export function createTrackEngine(ctx, dest, config = {}) {
       if (keep.length) engine._recBuffer.set(trackId, keep);
       else engine._recBuffer.delete(trackId);
     });
+    // One undo entry per finished take (REPLACE clear + all interim commits
+    // + the final close, including held notes). Interim commits already wrote
+    // directly so takes layer live; the command apply is idempotent.
+    if (finalizeHold) _pushTakeCommand();
+  }
+
+  function _pushTakeCommand() {
+    const snaps = engine._takeBefore;
+    engine._takeBefore = null;
+    if (!snaps || !engine.history) return;
+    const takes = [];
+    snaps.forEach(snap => {
+      const t = engine.byId[snap.trackId];
+      const clip = t && t.clips.find(c => c.id === snap.clipId);
+      const after = clip ? (clip.events || []).map(ev => ({ ...ev })) : [];
+      if (!clip && after.length === 0) return; // deleted mid-take, nothing to redo
+      if (snap.before !== null && JSON.stringify(snap.before) === JSON.stringify(after)) return;
+      takes.push({ ...snap, after });
+    });
+    if (takes.length) engine.history.execute(recordTakeCommand(engine, takes));
   }
 
   // Pattern take: loop-relative seconds into the selected step clip.
@@ -890,10 +920,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
       });
     }
     let clip = engine.getStepClip(t.id);
-    if (!clip) clip = engine.addClip(t.id, { start: 0 });
-    if (clip) {
-      clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
+    if (!clip) {
+      clip = engine.addClip(t.id, { start: 0 });
+      if (clip) _snapTakeClip(t, clip, false);
     }
+    if (!clip) return;
+    _snapTakeClip(t, clip);
+    clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
   }
 
   // Song take: absolute song ticks into the selected clip, stored
@@ -901,8 +934,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
   // durations are kept; playback already windows them to the clip.
   function _commitSongTake(t, closed) {
     let clip = engine.getStepClip(t.id);
-    if (!clip) clip = engine.addClip(t.id, { start: 0 });
+    if (!clip) {
+      clip = engine.addClip(t.id, { start: 0 });
+      if (clip) _snapTakeClip(t, clip, false);
+    }
     if (!clip) return;
+    _snapTakeClip(t, clip);
     const offset = clip.offset || 0;
     const tps = ticksPerSecond(engine.bpm, engine.ppq);
     let out = closed
@@ -949,7 +986,50 @@ export function createTrackEngine(ctx, dest, config = {}) {
   function _clearLoopClip(t) {
     if (!t) return;
     const clip = engine.getStepClip(t.id);
-    if (clip) engine.setClipEvents(t.id, clip.id, []);
+    if (!clip) return;
+    _snapTakeClip(t, clip);
+    engine.setClipEvents(t.id, clip.id, []);
+  }
+
+  // Snapshot a take-touched clip before its first mutation: pre-take events
+  // (for undo) plus geometry (to recreate take-made clips on redo).
+  function _snapTakeClip(t, clip, existed = true) {
+    if (!t || !clip) return;
+    if (!engine._takeBefore) engine._takeBefore = new Map();
+    const key = t.id + ':' + clip.id;
+    if (engine._takeBefore.has(key)) return;
+    engine._takeBefore.set(key, {
+      trackId: t.id,
+      clipId: clip.id,
+      before: existed ? (clip.events || []).map(ev => ({ ...ev })) : null,
+      geometry: { start: clip.start, length: clip.length, offset: clip.offset || 0 },
+    });
+  }
+
+  // Discard the take without committing: drop the buffer, restore every
+  // take-touched clip (undoes the REPLACE clear), then stop playback.
+  // No history entry is pushed — cancel leaves no trace. No-op when no
+  // take is in progress (never stops playback by accident).
+  engine.cancelTake = () => {
+    const bufActive = [...engine._recBuffer.values()].some(buf => buf.length > 0);
+    if (!engine._recording && !bufActive && !engine._takeBefore) return;
+    _restoreTakeSnapshots();
+    engine._recBuffer.clear();
+    engine._takeBefore = null;
+    engine._recording = false;
+    engine.stop(); // buffer empty + snapshots cleared: commits nothing
+  };
+
+  function _restoreTakeSnapshots() {
+    if (!engine._takeBefore) return;
+    engine._takeBefore.forEach(snap => {
+      const t = engine.byId[snap.trackId];
+      if (!t) return;
+      const clip = t.clips.find(c => c.id === snap.clipId);
+      if (snap.before === null) {
+        if (clip) engine.removeClip(snap.trackId, snap.clipId);
+      } else if (clip) engine.setClipEvents(snap.trackId, snap.clipId, snap.before);
+    });
   }
 
   // Snap a recorded note (in PPQ ticks) to the grid; mirrors quantizeStart from

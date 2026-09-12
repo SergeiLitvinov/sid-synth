@@ -82,6 +82,8 @@ import { createInputUI } from './audio/inputUI.js';
   const trackEngine = createTrackEngine(recorderCtx, recorderDest, { audioStore: assetStore, playbackMode: 'song' });
   const recorderEl = document.getElementById('recorder');
   const history = createHistory();
+  // Takes commit through this history as single undo entries (P0).
+  trackEngine.history = history;
   // Declared early: arranger/piano-roll cfg callbacks below close over it,
   // and createArranger renders synchronously during construction.
   let projectAssets = [];

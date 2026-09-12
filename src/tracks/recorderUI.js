@@ -25,6 +25,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
       <button class="rec-btn" id="recRecord">● REC</button>
       <button class="rec-btn" id="recPlay">▶ PLAY</button>
       <button class="rec-btn" id="recStop">■ STOP</button>
+      <button class="rec-btn" id="recCancel" title="Discard the take without committing (restores REPLACE-cleared notes)">✕ CANCEL</button>
       <button class="rec-btn rec-add" id="recAdd">+ ADD TRACK</button>
       <button class="rec-btn" id="recUndo" title="Undo (Ctrl+Z)" disabled>↶</button>
       <button class="rec-btn" id="recRedo" title="Redo (Ctrl+Y / Ctrl+Shift+Z)" disabled>↷</button>
@@ -49,6 +50,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   const recRecord = el.querySelector('#recRecord');
   const recPlay = el.querySelector('#recPlay');
   const recStop = el.querySelector('#recStop');
+  const recCancel = el.querySelector('#recCancel');
   const recBpm = el.querySelector('#recBpm');
   const recPos = el.querySelector('#recPos');
   const recRecMode = el.querySelector('#recRecMode');
@@ -135,9 +137,14 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
 
   recStop.addEventListener('click', () => engine.stop());
 
+  recCancel.addEventListener('click', () => {
+    if (typeof engine.cancelTake === 'function') engine.cancelTake();
+  });
+
   // Record mode (backlog #41): OVERDUB keeps existing clip notes, REPLACE clears
-  // the clip before recording. REC Q toggles record-time quantize. Neither is
-  // undoable by itself — only the recorded material is committed to the clip.
+  // the clip before recording. REC Q toggles record-time quantize. The whole
+  // take (REPLACE clear + recorded material) commits as one undo entry;
+  // CANCEL discards it without a trace.
   function syncRecControls() {
     recRecMode.textContent = (engine.recordMode === 'replace') ? 'REPLACE' : 'OVERDUB';
     recRecQ.checked = !!engine.recordQuantize;

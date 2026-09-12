@@ -393,6 +393,39 @@ export function removeClipsCommand(engine, items) {
   };
 }
 
+// Commit one recorded take across tracks as a single undo step (P0).
+// Each take is { trackId, clipId, before, after, geometry } where `before`
+// is null when the take created the clip (undo removes it; redo recreates
+// it with the same id), otherwise the pre-take events (undo restores them).
+// `geometry` ({ start, length, offset }) recreates take-made clips on redo.
+// apply() is idempotent: interim take writes already mutated the clips, so
+// executing the command right after the take is a no-op that only pushes
+// the entry; redo after undo re-applies `after` the same way.
+export function recordTakeCommand(engine, takes) {
+  const items = (takes || []).map(tk => ({
+    trackId: tk.trackId,
+    clipId: tk.clipId,
+    before: tk.before ? tk.before.map(ev => ({ ...ev })) : null,
+    after: (tk.after || []).map(ev => ({ ...ev })),
+    geometry: tk.geometry ? { ...tk.geometry } : null,
+  }));
+  function setEvents(tk, events) {
+    const t = engine.byId[tk.trackId];
+    let clip = t && t.clips.find(c => c.id === tk.clipId);
+    if (!clip && events !== null && tk.geometry) {
+      clip = engine.addClip(tk.trackId, { id: tk.clipId, ...tk.geometry });
+    }
+    if (!clip) return;
+    if (events === null) engine.removeClip(tk.trackId, tk.clipId);
+    else engine.setClipEvents(tk.trackId, tk.clipId, events);
+  }
+  return {
+    label: 'Record take',
+    apply() { items.forEach(tk => setEvents(tk, tk.after)); },
+    undo() { items.forEach(tk => setEvents(tk, tk.before)); },
+  };
+}
+
 // Replace a clip's note events (backlog #25, piano roll). Captures the previous
 // events on first apply so undo restores them; redo re-applies the new set.
 export function editClipEventsCommand(engine, id, clipId, events) {

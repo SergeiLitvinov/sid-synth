@@ -1634,6 +1634,74 @@ check('song stop with a held note closes it at the absolute stop position', () =
   return ev && ev.note === 'A3' && Math.abs(ev.start - 960) < 20 && Math.abs(ev.dur - 480) < 40;
 });
 
+// ---- single-transaction takes (P0) --------------------------------------------
+check('a take commits as one undo entry and redoes cleanly', () => {
+  const d = makeFixture(120);
+  d.engine.history = createHistory();
+  d.engine.recordMode = 'replace';
+  d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('E4');
+  d.advanceAndTick(250);
+  d.engine.noteOff('E4');
+  d.engine.stop();
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1 || loop.events[0].note !== 'E4') return false;
+  if (d.engine.history.state().canUndo !== true) return false;
+  d.engine.history.undo(); // REPLACE clear + take undone together
+  if (loop.events.length !== 1 || loop.events[0].note !== 'C4') return false;
+  d.engine.history.redo();
+  return loop.events.length === 1 && loop.events[0].note === 'E4';
+});
+check('cancelTake discards the take and restores REPLACE-cleared notes', () => {
+  const d = makeFixture(120);
+  d.engine.history = createHistory();
+  d.engine.recordMode = 'replace';
+  d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('E4');
+  d.advanceAndTick(250);
+  d.engine.noteOff('E4');
+  d.engine.cancelTake();
+  const loop = d.track.clips.find(c => c.start === 0);
+  return loop.events.length === 1 && loop.events[0].note === 'C4'
+    && d.engine.history.state().canUndo === false && d.engine._playing === false;
+});
+check('stop with a held note lands in the same single take entry', () => {
+  const d = makeFixture(120);
+  d.engine.history = createHistory();
+  d.record();
+  d.advanceAndTick(1000);
+  d.engine.noteOn('C4');
+  d.engine.stop(); // never released: closed to the loop end inside the take
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  d.engine.history.undo(); // the take created this clip: undo removes it
+  const undone = !d.track.clips.some(c => c.start === 0);
+  // Exactly one entry for the whole take (no separate held-note commit).
+  d.engine.history.redo();
+  const redone = d.track.clips.find(c => c.start === 0);
+  return undone && redone && redone.events.length === 1 && d.engine.history.state().canRedo === false;
+});
+check('an empty take pushes no undo entry', () => {
+  const d = makeFixture(120);
+  d.engine.history = createHistory();
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.stop();
+  return d.engine.history.state().canUndo === false;
+});
+check('cancelTake with no take in progress never stops playback', () => {
+  const d = makeFixture(120);
+  d.play();
+  d.engine.cancelTake();
+  const stillPlaying = d.engine._playing === true;
+  d.engine.stop();
+  return stillPlaying;
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';
