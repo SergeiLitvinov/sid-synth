@@ -35,6 +35,10 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
   let recorder = null;
   let takeStartTicks = 0;
   let takeCount = 0;
+  // Monotonic take-completion serial: bumped on EVERY finishTake exit
+  // (stored, empty, failed, punch-discarded) so tests can wait for the
+  // completed take instead of sleeping a fixed delay.
+  let takeSerial = 0;
   let countIn = null; // active count-in handle (take starts after it)
   let punchOn = false;
   let punchIn = null; // ticks, captured from the transport
@@ -439,6 +443,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
   async function finishTake(take) {
     if (!take || !take.audioBuffer || !(take.duration > 0)) {
       setStatus('empty take discarded');
+      takeSerial++;
       return null;
     }
     const { engine, store, getAssets, setAssets } = takeCfg;
@@ -448,6 +453,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
       res = await finalizeTake(take, { store, name: 'Take ' + takeCount + '.wav' });
     } catch (e) {
       setStatus('take failed: ' + (e.message || e));
+      takeSerial++;
       return null;
     }
     const manifest = typeof getAssets === 'function' ? getAssets().slice() : [];
@@ -471,6 +477,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
         if (!trimmed) {
           setStatus('take outside punch range, discarded');
           refreshSysLabel();
+          takeSerial++;
           return res;
         }
         start = trimmed.startTicks;
@@ -492,6 +499,7 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     }
     setStatus('take ' + take.duration.toFixed(1) + 's → ' + res.asset.name);
     refreshSysLabel();
+    takeSerial++;
     return res;
   }
 
@@ -528,6 +536,8 @@ export function createInputUI({ container, ctx, destination, deps, take } = {}) 
     isRecording: () => !!(recorder && recorder.isRecording()),
     isCounting: () => !!countIn,
     getTakeDuration: () => (recorder ? recorder.getDuration() : 0),
+    // Take-completion serial for deterministic tests (see takeSerial).
+    getTakeSerial: () => takeSerial,
     getLatencySec,
     getPunch: () => ({ on: punchOn, inTicks: punchIn, outTicks: punchOut }),
   };

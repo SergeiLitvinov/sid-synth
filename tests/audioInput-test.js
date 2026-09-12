@@ -19,6 +19,56 @@ function check(name, fn) {
   queue.push({ name, fn });
 }
 
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+// Poll `cond` until truthy or timeout. `describe` may be a function for
+// live diagnostics (status text) in the timeout message.
+async function waitFor(cond, { timeout = 5000, interval = 50, describe = 'condition' } = {}) {
+  const from = Date.now();
+  for (;;) {
+    let v = null;
+    try { v = await cond(); } catch (e) { v = null; }
+    if (v) return v;
+    if (Date.now() - from > timeout) {
+      throw new Error('timed out waiting for ' + (typeof describe === 'function' ? describe() : describe));
+    }
+    await sleep(interval);
+  }
+}
+
+// Wait for the completed take (any terminal outcome) instead of sleeping a
+// fixed delay. Diagnoses the stall with the panel status on timeout.
+async function waitForTake(ui, serialBefore, { timeout = 15000 } = {}) {
+  try {
+    await waitFor(() => ui.getTakeSerial() !== serialBefore, { timeout, describe: 'take completion' });
+  } catch (e) {
+    throw new Error(e.message + ' (status=' + ui.getStatus() + ' recording=' + ui.isRecording() + ')');
+  }
+}
+
+// Fake-device hardening: enumerate/select flake under load, so retry with
+// backoff instead of failing the suite on one bad poll.
+async function refreshDevicesReady(ui, { attempts = 6, interval = 500 } = {}) {
+  let devs = [];
+  for (let i = 0; i < attempts; i++) {
+    devs = await ui.refreshDevices();
+    if (devs.length) return devs;
+    await sleep(interval);
+  }
+  return devs;
+}
+async function selectDeviceReady(ui, id, { attempts = 3, interval = 400 } = {}) {
+  let lastErr = '';
+  for (let i = 0; i < attempts; i++) {
+    try {
+      if (await ui.selectDevice(id)) return true;
+      lastErr = ui.getStatus();
+    } catch (e) { lastErr = (e && e.message) || String(e); }
+    await sleep(interval);
+  }
+  throw new Error('selectDevice failed after ' + attempts + ' attempts: ' + lastErr);
+}
+
 check('listInputDevices returns audioinput entries', async () => {
   const devs = await listInputDevices();
   return Array.isArray(devs) && devs.every(d => typeof d.deviceId === 'string');
@@ -90,7 +140,8 @@ check('input UI renders picker, MON, meter and status', async () => {
   container.appendChild(el);
   const ctx = new AudioContext();
   const ui = createInputUI({ container: el, ctx, destination: ctx.destination });
-  await new Promise(res => setTimeout(res, 300));
+  await waitFor(() => el.querySelector('#inpDevice') && el.querySelector('#inpMon')
+    && el.querySelector('#inpMeter') && el.querySelector('.inp-status'), { timeout: 3000, describe: 'input UI render' });
   const ok = !!el.querySelector('#inpDevice') && !!el.querySelector('#inpMon')
     && !!el.querySelector('#inpMeter') && !!el.querySelector('.inp-status')
     && el.querySelector('.panel-title').textContent === 'INPUT';
@@ -104,14 +155,14 @@ check('input UI lists devices and arms the monitor', async () => {
   container.appendChild(el);
   const ctx = new AudioContext();
   const ui = createInputUI({ container: el, ctx, destination: ctx.destination });
-  const devs = await ui.refreshDevices();
+  const devs = await refreshDevicesReady(ui);
   if (!devs.length) {
     ui.dispose();
     el.remove();
     try { await ctx.close(); } catch (e) {}
-    return false;
+    throw new Error('no input devices after retries (fake device missing?)');
   }
-  const okSelect = await ui.selectDevice(devs[0].deviceId);
+  const okSelect = await selectDeviceReady(ui, devs[0].deviceId);
   el.querySelector('#inpMon').click();
   const armed = ui.isMonitoring()
     && el.querySelector('#inpMon').classList.contains('on');
@@ -201,55 +252,39 @@ check('REC captures a take into an asset and a track clip', async () => {
     store.close();
     return false;
   }
-  const devs = await ui.refreshDevices();
-  if (!devs.length) {
+  try {
+    const devs = await refreshDevicesReady(ui);
+    if (!devs.length) throw new Error('no input devices after retries (fake device missing?)');
+    await selectDeviceReady(ui, devs[0].deviceId);
+    recBtn.click();
+    await waitFor(() => ui.isRecording(), {
+      timeout: 5000, describe: () => 'recording start (status=' + ui.getStatus() + ')',
+    });
+    // Wait for real signal (not just the armed state) so the take cannot
+    // come back empty on a loaded page, then hold for duration margin.
+    await waitFor(() => ui.getTakeDuration() >= 0.35, { timeout: 8000, describe: 'take signal' });
+    const serial = ui.getTakeSerial();
+    recBtn.click();
+    await waitForTake(ui, serial);
+    var clip = placed.length ? placed[0].cfg : null;
+    // Placement compensates the effective input latency (system + trim).
+    var expectedStart = 960 - Math.round(ui.getLatencySec() * 960);
+    var okTake = manifest.length === 1 && !!clip
+      && clip.start === expectedStart && clip.audio && typeof clip.audio.hash === 'string'
+      && clip.length >= 480 && /take .*s/.test(ui.getStatus());
+  } finally {
     ui.dispose();
     el.remove();
     try { await ctx.close(); } catch (e) {}
     store.close();
-    return false;
+    await new Promise(resolve => {
+      const req = indexedDB.deleteDatabase('sid-synth-assets-take-test');
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
   }
-  if (!(await ui.selectDevice(devs[0].deviceId))) {
-    ui.dispose();
-    el.remove();
-    try { await ctx.close(); } catch (e) {}
-    store.close();
-    return false;
-  }
-  recBtn.click();
-  let waited = 0;
-  while (!ui.isRecording() && waited < 3000) {
-    await new Promise(res => setTimeout(res, 100));
-    waited += 100;
-  }
-  const wasRecording = ui.isRecording();
-  // Wait for real signal (not just the armed state) so the take cannot
-  // come back empty on a loaded page, then hold a bit for duration margin.
-  let signaled = 0;
-  while (ui.getTakeDuration() < 0.05 && signaled < 3000) {
-    await new Promise(res => setTimeout(res, 100));
-    signaled += 100;
-  }
-  await new Promise(res => setTimeout(res, 300));
-  recBtn.click();
-  await new Promise(res => setTimeout(res, 1200));
-  const clip = placed.length ? placed[0].cfg : null;
-  // Placement compensates the effective input latency (system + trim).
-  const expectedStart = 960 - Math.round(ui.getLatencySec() * 960);
-  const ok = wasRecording && manifest.length === 1 && !!clip
-    && clip.start === expectedStart && clip.audio && typeof clip.audio.hash === 'string'
-    && clip.length >= 480 && /take .*s/.test(ui.getStatus());
-  ui.dispose();
-  el.remove();
-  try { await ctx.close(); } catch (e) {}
-  store.close();
-  await new Promise(resolve => {
-    const req = indexedDB.deleteDatabase('sid-synth-assets-take-test');
-    req.onsuccess = () => resolve();
-    req.onerror = () => resolve();
-    req.onblocked = () => resolve();
-  });
-  return ok;
+  return okTake;
 });
 check('measureOutputLatency reads the context and rejects junk', () => {
   const ctx = new AudioContext();
@@ -313,39 +348,36 @@ check('take placement compensates effective latency', async () => {
       store, getAssets: () => manifest, setAssets: (a) => { manifest = a; },
     },
   });
-  const devs = await ui.refreshDevices();
+  const devs = await refreshDevicesReady(ui);
   let ok = false;
-  if (devs.length && (await ui.selectDevice(devs[0].deviceId))) {
+  try {
+    if (!devs.length) throw new Error('no input devices after retries (fake device missing?)');
+    await selectDeviceReady(ui, devs[0].deviceId);
     el.querySelector('#inpRec').click();
-    let waited = 0;
-    while (!ui.isRecording() && waited < 3000) {
-      await new Promise(res => setTimeout(res, 100));
-      waited += 100;
-    }
-    await new Promise(res => setTimeout(res, 400));
-    let signaled = 0;
-    while (ui.getTakeDuration() < 0.05 && signaled < 3000) {
-      await new Promise(res => setTimeout(res, 100));
-      signaled += 100;
-    }
+    await waitFor(() => ui.isRecording(), {
+      timeout: 5000, describe: () => 'recording start (status=' + ui.getStatus() + ')',
+    });
+    await waitFor(() => ui.getTakeDuration() >= 0.35, { timeout: 8000, describe: 'take signal' });
+    const serial = ui.getTakeSerial();
     el.querySelector('#inpRec').click();
-    await new Promise(res => setTimeout(res, 1200));
+    await waitForTake(ui, serial);
     // System latency estimates settle after context start — compare against
     // the value read at finalize time, like the placement code does.
     const lateExpected = 960 - Math.round(ui.getLatencySec() * 960);
     ok = placed.length === 1 && placed[0].start === lateExpected && lateExpected < 960;
+  } finally {
+    ui.dispose();
+    el.remove();
+    try { await ctx.close(); } catch (e) {}
+    store.close();
+    await new Promise(resolve => {
+      const req = indexedDB.deleteDatabase('sid-synth-assets-lat-test');
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
+    try { localStorage.removeItem(INPUT_LATENCY_KEY); } catch (e) {}
   }
-  ui.dispose();
-  el.remove();
-  try { await ctx.close(); } catch (e) {}
-  store.close();
-  await new Promise(resolve => {
-    const req = indexedDB.deleteDatabase('sid-synth-assets-lat-test');
-    req.onsuccess = () => resolve();
-    req.onerror = () => resolve();
-    req.onblocked = () => resolve();
-  });
-  try { localStorage.removeItem(INPUT_LATENCY_KEY); } catch (e) {}
   return ok;
 });
 check('metronome schedules accented beats per bar', () => {
@@ -487,9 +519,11 @@ check('punch trims the placed take clip', async () => {
     },
   });
   let posTicks = 0;
-  const devs = await ui.refreshDevices();
+  const devs = await refreshDevicesReady(ui);
   let ok = false;
-  if (devs.length && (await ui.selectDevice(devs[0].deviceId))) {
+  try {
+    if (!devs.length) throw new Error('no input devices after retries (fake device missing?)');
+    await selectDeviceReady(ui, devs[0].deviceId);
     // Punch region [0, 480], then rewind the static playhead to 0 so the
     // take starts inside the region without tripping auto-stop.
     el.querySelector('#inpPunchIn').click();
@@ -499,31 +533,26 @@ check('punch trims the placed take clip', async () => {
     posTicks = 0;
     // Record ~0.9s, expect a trimmed 480-tick clip at 0.
     el.querySelector('#inpRec').click();
-    let waited = 0;
-    while (!ui.isRecording() && waited < 3000) {
-      await new Promise(res => setTimeout(res, 100));
-      waited += 100;
-    }
-    let signaled = 0;
-    while (ui.getTakeDuration() < 0.05 && signaled < 3000) {
-      await new Promise(res => setTimeout(res, 100));
-      signaled += 100;
-    }
-    await new Promise(res => setTimeout(res, 900));
+    await waitFor(() => ui.isRecording(), {
+      timeout: 5000, describe: () => 'recording start (status=' + ui.getStatus() + ')',
+    });
+    await waitFor(() => ui.getTakeDuration() >= 0.85, { timeout: 8000, describe: 'take signal' });
+    const serial = ui.getTakeSerial();
     el.querySelector('#inpRec').click();
-    await new Promise(res => setTimeout(res, 1200));
+    await waitForTake(ui, serial);
     ok = placed.length === 1 && placed[0].start === 0 && placed[0].length === 480;
+  } finally {
+    ui.dispose();
+    el.remove();
+    try { await ctx.close(); } catch (e) {}
+    store.close();
+    await new Promise(resolve => {
+      const req = indexedDB.deleteDatabase('sid-synth-assets-punch-test');
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
   }
-  ui.dispose();
-  el.remove();
-  try { await ctx.close(); } catch (e) {}
-  store.close();
-  await new Promise(resolve => {
-    const req = indexedDB.deleteDatabase('sid-synth-assets-punch-test');
-    req.onsuccess = () => resolve();
-    req.onerror = () => resolve();
-    req.onblocked = () => resolve();
-  });
   return ok;
 });
 
