@@ -19,11 +19,39 @@ function scheduleEnvelope(param, ctx, at, adsr, vel) {
   param.linearRampToValueAtTime(adsr.s * scale, at + adsr.a + adsr.d);
 }
 
-function scheduleRelease(param, ctx, atEnd, adsr, vel) {
+function scheduleRelease(param, ctx, atEnd, adsr, vel, fromLevel) {
+  // Release from the actual envelope level (P0 voices): releasing mid-attack
+  // or mid-decay from the sustain level would jump (click). Prefer
+  // cancelAndHoldAtTime: it holds the computed timeline value at atEnd —
+  // including attack/decay scheduled ahead but not yet rendered (offline
+  // bounces, short lookahead notes) — so the release neither jumps nor
+  // erases the attack. The analytic fromLevel is the fallback for params
+  // without hold support (and what unit tests pin on the mock context).
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    try {
+      param.cancelAndHoldAtTime(atEnd);
+      param.linearRampToValueAtTime(0.0001, atEnd + adsr.r);
+      param.setValueAtTime(0, atEnd + adsr.r + 0.01);
+      return;
+    } catch (e) {}
+  }
+  const start = typeof fromLevel === 'number' ? Math.max(0, fromLevel) : adsr.s * velocityScale(vel);
   param.cancelScheduledValues(atEnd);
-  param.setValueAtTime(adsr.s * velocityScale(vel), atEnd);
+  param.setValueAtTime(start, atEnd);
   param.linearRampToValueAtTime(0.0001, atEnd + adsr.r);
   param.setValueAtTime(0, atEnd + adsr.r + 0.01);
+}
+
+// Analytic envelope level at time t for an attack scheduled at `at`
+// (mirrors scheduleEnvelope): attack ramp, decay ramp, sustain floor.
+function envelopeLevelAt(t, at, adsr, vel) {
+  const scale = velocityScale(vel);
+  const dt = t - at;
+  if (!(dt > 0)) return 0;
+  if (dt < adsr.a) return adsr.a > 0 ? (scale * dt) / adsr.a : scale;
+  const dd = dt - adsr.a;
+  if (dd < adsr.d) return adsr.d > 0 ? scale * (1 - ((1 - adsr.s) * dd) / adsr.d) : scale * adsr.s;
+  return scale * adsr.s;
 }
 
 function resetVoice(param, ctx, at) {
@@ -150,13 +178,30 @@ export class TrackVoices {
   }
 
   _acquireVoice(at) {
-    const now = this.ctx.currentTime;
-    let free = this.voices.find(v => v.activeNote === null && v.busyUntil <= now);
+    // Compare against the note's scheduled time, not now: with lookahead
+    // scheduling a voice busy until T < at is free by the time the note
+    // sounds — stealing it would cut a ringing note for nothing.
+    const ref = typeof at === 'number' ? at : this.ctx.currentTime;
+    let free = this.voices.find(v => v.activeNote === null && v.busyUntil <= ref);
     if (!free) {
       free = this.voices.reduce((a, b) => (a.busyUntil <= b.busyUntil ? a : b));
       resetVoice(free.env.gain, this.ctx, at);
     }
     return free;
+  }
+
+  // Release one voice from its analytic attack level (P0 voices): shares
+  // the noteOn schedule (attackAt/attackVel) so mid-attack/mid-decay
+  // releases never jump.
+  _releaseVoice(v, at) {
+    const vel = v.velScale !== undefined ? v.velScale * 127 : 100;
+    const from = v.attackAt !== undefined
+      ? envelopeLevelAt(at, v.attackAt, this.track.adsr, v.attackVel)
+      : undefined;
+    scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr, vel, from);
+    v.busyUntil = at + this.track.adsr.r + 0.01;
+    v.activeNote = null;
+    v.velScale = undefined;
   }
 
   _armOsc(v, note, at) {
@@ -210,10 +255,21 @@ export class TrackVoices {
   noteOn(note, at, dur, vel) {
     const resolve = (n) => (n && n.length ? n.toUpperCase() : n);
     const noteName = resolve(note);
+    // Restrike (P0 voices): cut existing rings of the same pitch —
+    // sustain-held or overlapping — so repeats re-attack instead of
+    // stacking into phasing mush. Cut from the analytic attack level.
+    this.voices.forEach(v => {
+      if (v.activeNote === noteName) {
+        this._releaseVoice(v, at);
+        v._sustainHeld = false;
+      }
+    });
     const v = this._acquireVoice(at);
     this._armOsc(v, noteName, at);
     this._ensureStarted(v);
     v.velScale = velocityScale(vel);
+    v.attackAt = at;
+    v.attackVel = vel;
     v._sustainHeld = false;
     scheduleEnvelope(v.env.gain, this.ctx, at, this.track.adsr, vel);
     // Apply current pitch bend to newly armed oscillator (backlog #174)
@@ -225,7 +281,8 @@ export class TrackVoices {
     v.activeNote = noteName;
     if (dur) {
       const end = at + Math.max(0.03, dur);
-      scheduleRelease(v.env.gain, this.ctx, end, this.track.adsr, vel);
+      const from = envelopeLevelAt(end, at, this.track.adsr, vel);
+      scheduleRelease(v.env.gain, this.ctx, end, this.track.adsr, vel, from);
       v.busyUntil = end + this.track.adsr.r + 0.01;
       v.activeNote = null;
     } else {
@@ -243,10 +300,7 @@ export class TrackVoices {
       v._sustainHeld = true;
       return;
     }
-    scheduleRelease(v.env.gain, this.ctx, at, this.track.adsr, v.velScale * 127);
-    v.busyUntil = at + this.track.adsr.r + 0.01;
-    v.activeNote = null;
-    v.velScale = undefined;
+    this._releaseVoice(v, at);
   }
 
   // Flag an open voice as pedal-held (chase path): a seek/chase retrigger
@@ -333,15 +387,16 @@ export class TrackVoices {
     const wasSustain = this._sustain;
     this._sustain = !!held;
     if (wasSustain && !this._sustain) {
-      // Release all held voices
+      // Release all held voices from their analytic attack levels.
       const now = this.ctx.currentTime;
       this.voices.forEach(v => {
         if (v._sustainHeld) {
-          scheduleRelease(v.env.gain, this.ctx, now, this.track.adsr, v.velScale * 127);
-          v.busyUntil = now + this.track.adsr.r + 0.01;
-          v.activeNote = null;
-          v.velScale = undefined;
           v._sustainHeld = false;
+          if (v.activeNote !== null) this._releaseVoice(v, now);
+          else {
+            v.busyUntil = now + this.track.adsr.r + 0.01;
+            v.velScale = undefined;
+          }
         }
       });
     }
