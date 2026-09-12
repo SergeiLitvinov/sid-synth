@@ -4,7 +4,8 @@ import {
   defaultTrackConfig,
   STEPS_PER_LOOP,
 } from '../src/tracks/trackEngine.js';
-import { setClipAudioCommand, crossfadeClipsCommand } from '../src/project/trackCommands.js';
+import { setClipAudioCommand, crossfadeClipsCommand, editClipEventsCommand } from '../src/project/trackCommands.js';
+import { createHistory } from '../src/project/history.js';
 
 const results = document.getElementById('results');
 const summary = document.getElementById('summary');
@@ -1461,6 +1462,84 @@ check('chase restarts offset clips at the windowed remainder', () => {
   d.spy.length = 0;
   d.engine.chaseToTick(2800); // inside the windowed note (2760..2880)
   return d.spy.length === 1 && d.spy[0].note === 'E4' && Math.abs(d.spy[0].dur - 80 / 960) < 1e-6;
+});
+
+// --- edit/delete/undo during playback (P0 edit-chase) ----------------------
+check('editing a past event during playback does not refire it', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const c = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  d.play();
+  for (let i = 0; i < 30; i++) d.advanceAndTick(100); // 3.0s: C4 sounded at ~2.0s
+  if (d.spy.filter(s => s.note === 'C4').length !== 1) return false;
+  d.engine.setClipEvents('trk_a', c.id, [{ note: 'D4', start: 0, dur: 120 }]);
+  const before = d.spy.length;
+  for (let i = 0; i < 5; i++) d.advanceAndTick(100);
+  return d.spy.length === before;
+});
+check('deleting notes during playback silences their voices', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.play();
+  d.engine.noteOn('E4'); // live open note on the active track voice
+  const live = d.track.voice.voices.find(v => v.activeNote === 'E4');
+  if (!live) return false;
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, []);
+  return !d.track.voice.voices.some(v => v.activeNote === 'E4');
+});
+check('future edits during playback sound on time', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.play();
+  d.advanceAndTick(100);
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'E4', start: 960, dur: 120 }]);
+  for (let i = 0; i < 12; i++) d.advanceAndTick(100); // past 1.0s
+  const hit = d.spy.find(s => s.note === 'E4');
+  return !!hit && Math.abs(hit.at - 1.03) < 1e-6;
+});
+check('edit rescheduling touches only the edited track', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  d.engine.addTrack({ id: 'trk_b', name: 'B' });
+  d.engine.addClip('trk_b', { start: 0, length: 1920 });
+  d.engine.addClip('trk_b', { start: 1920, length: 3840, events: [{ note: 'E4', start: 0, dur: 3840 }] });
+  const tb = d.engine.byId.trk_b;
+  const origB = tb.voice.noteOn.bind(tb.voice);
+  tb.voice.noteOn = (note, at, dur, vel) => { d.spy.push({ note, at, dur, vel }); origB(note, at, dur, vel); };
+  d.play();
+  for (let i = 0; i < 30; i++) d.advanceAndTick(100); // 3.0s: C4 looped, E4 linear once
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120 }]);
+  for (let i = 0; i < 5; i++) d.advanceAndTick(100);
+  // E4 (linear note on the untouched track) must not refire from flag
+  // clearing; C4 keeps its natural loop count.
+  return d.spy.filter(s => s.note === 'E4').length === 1
+    && d.spy.filter(s => s.note === 'C4').length === 2;
+});
+check('edits while stopped do not silence or flag anything', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  let offs = 0;
+  const origOff = d.track.voice.allOff.bind(d.track.voice);
+  d.track.voice.allOff = (at) => { offs++; origOff(at); };
+  d.engine.setClipEvents('trk_a', d.track.clips[0].id, [{ note: 'C4', start: 0, dur: 120 }]);
+  if (offs !== 0) return false;
+  d.play();
+  d.advanceAndTick(100);
+  return !!d.spy.find(s => s.note === 'C4');
+});
+check('undo during playback restores notes without stale sound', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const c = d.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  const history = createHistory();
+  d.play();
+  for (let i = 0; i < 30; i++) d.advanceAndTick(100); // 3.0s: C4 sounded
+  history.execute(editClipEventsCommand(d.engine, 'trk_a', c.id, []));
+  history.undo(); // C4 back, as a fresh past event
+  const before = d.spy.length;
+  for (let i = 0; i < 5; i++) d.advanceAndTick(100);
+  const c4 = d.spy.filter(s => s.note === 'C4').length;
+  return d.spy.length === before && c4 === 1;
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;

@@ -197,6 +197,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     _applyAudibility();
     if ('inserts' in patch && t.voice && t.voice.rebuildChain) t.voice.rebuildChain();
     _emitState();
+    if ('clips' in patch) engine._rescheduleTrack(id);
   };
 
   // ---- insert devices (backlog #32) -----------------------------------
@@ -271,6 +272,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const clip = defaultClip(cfg);
     t.clips.push(clip);
     _emitState();
+    engine._rescheduleTrack(id);
     return clip;
   };
 
@@ -281,6 +283,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (i < 0) return false;
     t.clips.splice(i, 1);
     _emitState();
+    engine._rescheduleTrack(id);
     return true;
   };
 
@@ -296,6 +299,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (typeof patch.length === 'number') clip.length = Math.max(1, Math.round(patch.length));
     if (typeof patch.offset === 'number') clip.offset = Math.max(0, Math.round(patch.offset));
     _emitState();
+    engine._rescheduleTrack(id);
     return true;
   };
 
@@ -307,6 +311,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!clip) return false;
     clip.events = (events || []).map(ev => ({ ...ev })).sort((a, b) => (a.start || 0) - (b.start || 0));
     _emitState();
+    engine._rescheduleTrack(id);
     return true;
   };
 
@@ -349,6 +354,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     clip.length = splitOffset;
     t.clips.push(right);
     _emitState();
+    engine._rescheduleTrack(id);
     return right;
   };
 
@@ -368,6 +374,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     });
     t.clips.push(copy);
     _emitState();
+    engine._rescheduleTrack(id);
     return copy;
   };
 
@@ -393,6 +400,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       copies.push(copy);
     }
     _emitState();
+    engine._rescheduleTrack(id);
     return copies;
   };
 
@@ -504,6 +512,33 @@ export function createTrackEngine(ctx, dest, config = {}) {
     });
   };
 
+  // Reschedule one track after an edit during playback (P0 edit-chase):
+  // silence stale voices, drop scheduling flags so the new state schedules
+  // from now, retire finished events, and chase sustained ones. Other tracks
+  // keep flowing untouched. No-op while stopped.
+  engine._rescheduleTrack = (id) => {
+    if (!engine._playing) return;
+    const t = engine.byId[id];
+    if (!t) return;
+    t.voice.allOff(engine.ctx.currentTime);
+    (t.clips || []).forEach(c => (c.events || []).forEach(ev => delete ev._scheduledLin));
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    const posTicks = ((engine._nowMs() - engine._startMs) / 1000) * tps;
+    const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
+    const stepClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
+    (t.clips || []).forEach(clip => {
+      if (clip === loopClip || clip === stepClip) return;
+      const offset = clip.offset || 0;
+      (clip.events || []).forEach(ev => {
+        const evStart = (typeof ev.start === 'number' ? ev.start : 0) - offset;
+        const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+        if (evStart < 0 || evStart >= clip.length) return;
+        if (evDur > 0 && clip.start + evStart + evDur <= posTicks) ev._scheduledLin = true;
+      });
+    });
+    engine.chaseToTick(posTicks, [id]);
+  };
+
   // Mark finished linear events as scheduled up to an absolute tick (seek).
   // After a seek the adapter clears all flags and chases; without this, the
   // scheduler would replay every finished clip from the top (late-pass
@@ -538,13 +573,16 @@ export function createTrackEngine(ctx, dest, config = {}) {
 
   // Chase: fire noteOn for all sustained notes at the given absolute tick.
   // Called after seek so notes that started before the seek point but haven't
-  // ended yet are re-triggered with a truncated duration.
-  engine.chaseToTick = (absTick) => {
+  // ended yet are re-triggered with a truncated duration. `trackIds` limits
+  // the chase to edited tracks (edit-during-playback rescheduling).
+  engine.chaseToTick = (absTick, trackIds) => {
     if (!engine._playing) return;
+    const only = Array.isArray(trackIds) ? new Set(trackIds) : null;
     const tps = ticksPerSecond(engine.bpm, engine.ppq);
     const nowAbs = engine._playStartCtx + ((engine._nowMs() - engine._startMs) / 1000);
     const loopLenTicks = STEPS_PER_LOOP * (engine.ppq / 4);
     engine.tracks.forEach(t => {
+      if (only && !only.has(t.id)) return;
       if (engine.byId[t.id].enabled === false) return;
       // Step clip loop region: check events against loop-relative position.
       const loopClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
