@@ -27,6 +27,7 @@ import { fixedLengthEvents } from './fixedLength.js';
 import { humanizeEvents } from './humanize.js';
 import { previewEvents } from './preview.js';
 import { editClipEventsCommand, setClipAudioCommand } from '../project/trackCommands.js';
+import { stepTicks } from '../project/clipEvents.js';
 
 const CELL_W = 18;
 const CELL_H = 12;
@@ -531,7 +532,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   function stepGeom() {
     if (!sel || !commitCtx) return null;
     const ppq = transport.ppq || 480;
-    const sixteenth = Math.max(1, Math.round(ppq / 4));
+    const sixteenth = Math.max(1, Math.round(stepTicks(ppq)));
     const tracks = (engine.getTracks && engine.getTracks()) || [];
     const t = tracks.find(x => x.id === sel.trackId);
     const clip = t && (t.clips || []).find(c => c.id === sel.clipId);
@@ -1228,7 +1229,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
       const ppq = transport.ppq || 480;
       commitCtx.commitEvents(events => {
         const selectedEvents = events.filter(ev => selected.has(ev));
-        const copies = duplicateEvents(selectedEvents, { stepTicks: Math.max(1, ppq / 4) });
+        const copies = duplicateEvents(selectedEvents, { stepTicks: Math.max(1, stepTicks(ppq)) });
         copies.forEach(ev => events.push(ev));
         events.sort((a, b) => (a.start || 0) - (b.start || 0));
       });

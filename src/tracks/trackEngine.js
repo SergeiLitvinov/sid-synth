@@ -7,6 +7,7 @@ import {
   gridToClipEvents, rtToClipEvents, mergeClipEvents,
   stepTicks, ticksPerSecond,
 } from '../project/clipEvents.js';
+import { DEFAULT_PPQ } from '../project/musicalTime.js';
 import { normalizeAudioRef, createAudioEngine } from '../audio/audioEngine.js';
 
 export const STEPS_PER_LOOP = 16;
@@ -64,13 +65,16 @@ export function defaultTrackConfig(cfg = {}) {
 // write its `events` (PPQ ticks), scheduled with a lookahead timer against
 // the Web Audio clock for sample accuracy. The 16-step grid is a pure
 // projection (clipSelection.getGrid); gridNote/gridDur are only defaults
-// for new steps. Legacy string cells ("C4") normalize on clip import, so
-// old saved tracks keep working through the load-time fold.
+// for new steps. All tick/second conversions go through the single
+// vocabulary (stepTicks/ticksPerSecond, identical to the tempo map on
+// constant tempo); the step scheduler itself is constant-tempo by design —
+// variable-tempo maps need a scheduler rework, not just new conversions.
+// PPQ is fixed (DEFAULT_PPQ, never migrated at runtime).
 export function createTrackEngine(ctx, dest, config = {}) {
   const engine = {
     ctx,
     bpm: config.bpm || 120,
-    ppq: config.ppq || 480,
+    ppq: config.ppq || DEFAULT_PPQ,
     playbackMode: config.playbackMode === 'song' ? 'song' : 'pattern',
     tracks: [],
     byId: {},
@@ -801,7 +805,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       if (committed.length) {
         let out = committed;
         if (engine.recordQuantize) {
-          const tps = (engine.bpm / 60) * engine.ppq;
+          const tps = ticksPerSecond(engine.bpm, engine.ppq);
           const q = engine.recordQuantize;
           out = committed.map(e => {
             const qd = quantizeTick(e.start * tps, engine.ppq, q.grid, q.strength, q.swing);

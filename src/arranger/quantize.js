@@ -5,9 +5,11 @@
 // (the swung off-beat); `strength` (0-100) pulls each start part-way to the
 // target (100 = full snap). Starts are never pulled below 0.
 
-// The quantize grid step in ticks: `grid` sixteenths of one step (ppq/4).
+import { stepTicks } from '../project/clipEvents.js';
+
+// The quantize grid step in ticks: `grid` sixteenths of one step.
 export function quantizeGridTicks(ppq = 480, grid = 1) {
-  return Math.max(1, (ppq / 4) * Math.max(1, Math.round(grid)));
+  return Math.max(1, stepTicks(ppq) * Math.max(1, Math.round(grid)));
 }
 
 // Quantize one note start to the (swung) grid. Returns the new tick position.

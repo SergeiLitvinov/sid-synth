@@ -4,6 +4,7 @@
 // Pure enough to unit-test in the browser with an injected clock.
 
 import { createTempoMap, tempoAt, addTempo, ticksToSeconds, secondsToTicks } from './tempoMap.js';
+import { stepTicks } from './clipEvents.js';
 
 export function createTransport(cfg = {}) {
   const tempoMap = cfg.tempoMap || createTempoMap({
@@ -108,7 +109,7 @@ export function createTransport(cfg = {}) {
     emit(t._onTick, {
       loopPosTicks,
       loopPosSec: ticksToSeconds(tempoMap, loopPosTicks),
-      step: Math.floor(loopPosTicks / (t.ppq / 4)) % 16,
+      step: Math.floor(loopPosTicks / stepTicks(t.ppq)) % 16,
       loopCount: loop,
       playing: true,
     });
@@ -121,7 +122,7 @@ export function createTransport(cfg = {}) {
     ppq: t.ppq,
     loopPosTicks: t._loopPosTicks,
     loopPosSec: ticksToSeconds(tempoMap, t._loopPosTicks),
-    step: Math.floor(t._loopPosTicks / (t.ppq / 4)) % 16,
+    step: Math.floor(t._loopPosTicks / stepTicks(t.ppq)) % 16,
     loopCount: t._loopCount,
     loopLenTicks: t.loopLenTicks,
     loopEnabled: t.loopEnabled,
@@ -186,7 +187,7 @@ export function createTransport(cfg = {}) {
     emit(t._onTick, {
       loopPosTicks: t._loopPosTicks,
       loopPosSec: ticksToSeconds(tempoMap, t._loopPosTicks),
-      step: Math.floor(t._loopPosTicks / (t.ppq / 4)) % 16,
+      step: Math.floor(t._loopPosTicks / stepTicks(t.ppq)) % 16,
       loopCount: t._loopCount,
       playing: t.playing,
     });

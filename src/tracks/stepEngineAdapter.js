@@ -5,6 +5,7 @@
 // transport's scheduler passes so one clock drives everything.
 
 import { STEPS_PER_LOOP } from './trackEngine.js';
+import { stepTicks } from '../project/clipEvents.js';
 
 export function createStepEngineAdapter(engine, transport) {
   // Sync the engine's clock to the transport's so engine._tick computes the
@@ -41,10 +42,10 @@ export function createStepEngineAdapter(engine, transport) {
     engine._startMs = transport._startMs;
     engine._playStartCtx = transport._playStartCtx;
     // Reset grid cursor to the step matching the new loop-relative position.
-    const ticksToSec = engine.stepDur / (engine.ppq / 4);
+    const ticksToSec = engine.stepDur / stepTicks(engine.ppq);
     engine._loopPos = transport._loopPosTicks * ticksToSec;
     engine._loopCount = transport._loopCount;
-    const stepDurTicks = engine.ppq / 4;
+    const stepDurTicks = stepTicks(engine.ppq);
     engine._cursor = Math.floor((transport._loopPosTicks) / stepDurTicks) % STEPS_PER_LOOP;
     engine._cursorLoopAbs = transport._playStartCtx + engine._loopCount * engine.loopDur;
     // Reset linear playback flags so events before the seek can be rescheduled.

@@ -1,5 +1,9 @@
 import { DEFAULT_PPQ, beatTicks, barLengthTicks, barStartTicks, musicalToTicks, ticksToMusical } from '../src/project/musicalTime.js';
 import { createTempoMap, tempoAt, signatureAt, addTempo, addSignature, ticksToSeconds, secondsToTicks, ticksToMusicalTime, musicalTimeToTicks } from '../src/project/tempoMap.js';
+import { stepTicks, ticksPerSecond } from '../src/project/clipEvents.js';
+import { createMockAudioContext } from './mockAudioContext.js';
+import { createTrackEngine } from '../src/tracks/trackEngine.js';
+import { createTransport } from '../src/project/transport.js';
 
 const results = document.getElementById('results');
 const summary = document.getElementById('summary');
@@ -162,6 +166,24 @@ check('musicalTimeToTicks/ticksToMusicalTime inverse across signature change', (
     if (musicalTimeToTicks(m, mu) !== t) return false;
   }
   return true;
+});
+check('PPQ invariant: engine, transport and maps derive from DEFAULT_PPQ', () => {
+  if (DEFAULT_PPQ !== 480) return false;
+  const ctx = createMockAudioContext();
+  const engine = createTrackEngine(ctx, ctx.destination, {});
+  const transport = createTransport({});
+  const map = createTempoMap({});
+  const ok = engine.ppq === DEFAULT_PPQ && transport.ppq === DEFAULT_PPQ && map.ppq === DEFAULT_PPQ;
+  engine.dispose();
+  try { transport.stop(); } catch (e) {}
+  return ok;
+});
+check('single vocabulary: helpers agree with the tempo map on constant tempo', () => {
+  const map = createTempoMap({ bpm: 120 });
+  return stepTicks(480) === 120
+    && ticksPerSecond(120, 480) === 960
+    && Math.abs(ticksToSeconds(map, 960) - 1) < 1e-9
+    && Math.abs(secondsToTicks(map, 2.5) - 2400) < 1e-9;
 });
 
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;

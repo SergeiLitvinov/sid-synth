@@ -6,6 +6,7 @@
 import { computeRuler, contentWidthTicks, layoutTrackBlocks, layoutClips, layoutClipNotes, ticksToX, xToTicks, snapTicks } from './arrangerLayout.js';
 import { addClipCommand, moveClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, setTrackFlagCommand, renameTrackCommand, reorderTrackCommand, updateTrackCommand, resizeTrackCommand, crossfadeClipsCommand } from '../project/trackCommands.js';
 import { drawWaveform } from '../audio/waveform.js';
+import { stepTicks } from '../project/clipEvents.js';
 import { addMarkerCommand, removeMarkerCommand } from '../project/markerCommands.js';
 
 const DEFAULT_ZOOM = 48;      // px per quarter note
@@ -460,10 +461,10 @@ export function createArranger({ container, engine, transport, history, markers,
     let endTicks = resize.endTicks;
     if (resize.edge === 'right') {
       endTicks = snapTicks(resize.endTicks + deltaTicks, { ppq });
-      endTicks = Math.max(endTicks, resize.startTicks + snapTicks(ppq / 4, { ppq }));
+      endTicks = Math.max(endTicks, resize.startTicks + stepTicks(ppq));
     } else {
       startTicks = snapTicks(resize.startTicks + deltaTicks, { ppq });
-      startTicks = Math.max(0, Math.min(startTicks, resize.endTicks - snapTicks(ppq / 4, { ppq })));
+      startTicks = Math.max(0, Math.min(startTicks, resize.endTicks - stepTicks(ppq)));
     }
     // Live-preview the new span on the DOM block.
     const lane = lanesEl.querySelector('.arranger-lane[data-id="' + resize.trackId + '"]');
