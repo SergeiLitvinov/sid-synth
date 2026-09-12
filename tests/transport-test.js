@@ -443,6 +443,126 @@ check('getState includes loop/project fields', () => {
   return s.loopEnabled === true && s.loopStartTicks === 0 && s.loopEndTicks === 1920 && s.projectEndTicks === 5760;
 });
 
+// ---- transport loop wrap resync (P0 seek/loop) ------------------------------
+check('loop wrap replays the region, excluded bars stay silent', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  f.engine.addClip('trk_a', { start: 1920, length: 1920, events: [{ note: 'D4', start: 0, dur: 120 }] });
+  f.transport.setLoopRegion(0, 1920); // loop bar 1 only
+  f.play();
+  for (let i = 0; i < 50; i++) {
+    f.set((i + 1) * 100);
+    f.ctx.currentTime = (i + 1) / 10;
+    f.transport._tick();
+  }
+  f.stop();
+  const ats = (n) => f.spy.filter(s => s.note === n).map(s => s.at);
+  const inWin = (list, from, to) => list.filter(t => t >= from && t < to).length;
+  const c4 = ats('C4');
+  const d4 = ats('D4');
+  // D4's bar is excluded from the loop: never scheduled. C4 replays per pass.
+  // (Scheduled-not-yet-sounding voices killed at the wrap may reschedule, so
+  // per-window counts use >= rather than exact numbers.)
+  return d4.length === 0 && inWin(c4, 0, 2) >= 1 && inWin(c4, 2, 4) >= 1 && inWin(c4, 4, 6) >= 1;
+});
+check('loop wrap keeps engine position coherent with the transport', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 });
+  f.transport.setLoopRegion(0, 1920);
+  f.play();
+  for (let i = 0; i < 30; i++) {
+    f.set((i + 1) * 100);
+    f.ctx.currentTime = (i + 1) / 10;
+    f.transport._tick();
+  }
+  const tPos = f.transport.getState().loopPosSec;
+  const ePos = f.engine._loopPos;
+  f.stop();
+  return Math.abs(ePos - tPos) < 0.05 && Math.abs(tPos - 1) < 0.05;
+});
+
+// ---- pause / resume -------------------------------------------------------
+check('pause keeps position and stops; getState reports paused', () => {
+  const t = createTransport({ bpm: 120 });
+  t.play();
+  t._loopPosTicks = 960;
+  t.pause();
+  const s = t.getState();
+  return s.playing === false && s.paused === true && s.loopPosTicks === 960;
+});
+check('play after pause resumes without onStart', () => {
+  const t = createTransport({ bpm: 120 });
+  let starts = 0;
+  let resumes = 0;
+  t.onStart(() => starts++);
+  t.onResume(() => resumes++);
+  t.play();
+  t._loopPosTicks = 960;
+  t.pause();
+  t.play();
+  const ok = starts === 1 && resumes === 1 && t.playing === true && t.paused === false
+    && t._loopPosTicks === 960;
+  t.stop();
+  return ok;
+});
+check('stop clears the paused flag', () => {
+  const t = createTransport({ bpm: 120 });
+  t.play();
+  t.pause();
+  t.stop();
+  return t.paused === false && t.playing === false && t._loopPosTicks === 0;
+});
+check('adapter pause suspends the engine without resetting it', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }] });
+  f.play();
+  f.set(500);
+  f.ctx.currentTime = 0.5;
+  f.transport._tick();
+  const cursorBefore = f.engine._cursor;
+  f.transport.pause();
+  const kept = f.engine._playing === false && Math.abs(f.engine._loopPos - 0.5) < 0.05
+    && f.engine._cursor === cursorBefore;
+  f.transport.play();
+  const resumed = f.engine._playing === true;
+  f.stop();
+  return kept && resumed;
+});
+check('resume chases sustained notes and replays the window', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 });
+  f.engine.addClip('trk_a', { start: 960, length: 2880, events: [{ note: 'E4', start: 0, dur: 1920 }] });
+  f.play();
+  for (let i = 0; i < 15; i++) {
+    f.set((i + 1) * 100);
+    f.ctx.currentTime = (i + 1) / 10;
+    f.transport._tick();
+  }
+  f.spy.length = 0;
+  f.transport.pause();
+  f.transport.play(); // resume at ~1.5s, inside E4 (1..3s)
+  const chased = f.spy.filter(s => s.note === 'E4');
+  f.stop();
+  return chased.length === 1 && chased[0].dur > 0 && chased[0].dur < 2;
+});
+check('sustained notes crossing the loop end replay truncated per pass', () => {
+  const f = makeAdapterFixture(120);
+  f.engine.addClip('trk_a', { start: 0, length: 1920 });
+  f.engine.addClip('trk_a', { start: 1800, length: 120, events: [{ note: 'E4', start: 0, dur: 700 }] });
+  f.transport.setLoopRegion(0, 1920);
+  f.play();
+  for (let i = 0; i < 40; i++) {
+    f.set((i + 1) * 100);
+    f.ctx.currentTime = (i + 1) / 10;
+    f.transport._tick();
+  }
+  f.stop();
+  // Once per loop pass, truncated to the in-region head (120 ticks);
+  // the wrap kills the tail instead of bleeding past the boundary.
+  const hits = f.spy.filter(s => s.note === 'E4');
+  return hits.length === 2 && hits.every(h => Math.abs(h.dur - 0.125) < 1e-6);
+});
+
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;
 if (failed.length) summary.className = 'fail';
 window.__testResults = { passed: passed.length, failed: failed.length };

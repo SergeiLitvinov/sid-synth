@@ -19,6 +19,7 @@ export function createTransport(cfg = {}) {
     ppq: tempoMap.ppq,
     playing: false,
     recording: false,
+    paused: false,
     loopLenTicks: cfg.loopLenTicks !== undefined ? cfg.loopLenTicks : 4 * tempoMap.ppq,
     loopEnabled: cfg.loopEnabled !== undefined ? cfg.loopEnabled : false,
     loopStartTicks: cfg.loopStartTicks !== undefined ? cfg.loopStartTicks : 0,
@@ -36,6 +37,8 @@ export function createTransport(cfg = {}) {
     _schedulers: [],
     _onStart: [],
     _onStop: [],
+    _onPause: [],
+    _onResume: [],
     _onTick: [],
     _onLoopWrap: [],
     _onSeek: [],
@@ -105,6 +108,9 @@ export function createTransport(cfg = {}) {
       elapsed,
       loopPosTicks,
       loopCount: loop,
+      loopEnabled: t.loopEnabled,
+      loopStartTicks: t.loopStartTicks,
+      loopEndTicks: t.loopEndTicks,
     });
     emit(t._onTick, {
       loopPosTicks,
@@ -118,6 +124,7 @@ export function createTransport(cfg = {}) {
   t.getState = () => ({
     playing: t.playing,
     recording: t.recording,
+    paused: t.paused,
     bpm: t.bpm,
     ppq: t.ppq,
     loopPosTicks: t._loopPosTicks,
@@ -134,6 +141,20 @@ export function createTransport(cfg = {}) {
   t.play = () => {
     if (t.playing) return;
     _resume();
+    if (t.paused) {
+      // Resume from the kept position: rebase the clock under it and let
+      // subscribers continue (onResume) instead of restarting (onStart).
+      t.paused = false;
+      const sec = ticksToSeconds(tempoMap, t._loopPosTicks);
+      t._startMs = t._nowMs() - sec * 1000;
+      t._playStartCtx = (t.ctx ? t.ctx.currentTime : 0) + 0.03;
+      t.playing = true;
+      emit(t._onResume);
+      emitState();
+      _tick();
+      t._timer = setInterval(_tick, t.timerMs);
+      return;
+    }
     t._startMs = t._nowMs();
     t._playStartCtx = (t.ctx ? t.ctx.currentTime : 0) + 0.03;
     t._loopPosTicks = 0;
@@ -155,9 +176,22 @@ export function createTransport(cfg = {}) {
     if (t._timer) { clearInterval(t._timer); t._timer = null; }
     t.playing = false;
     t.recording = false;
+    t.paused = false;
     t._loopPosTicks = 0;
     t._loopCount = 0;
     emit(t._onStop);
+    emitState();
+  };
+
+  // Pause keeps the playhead: sound stops, position/counts/flags stay, and
+  // the next play() resumes instead of restarting. Recording ends on pause.
+  t.pause = () => {
+    if (!t.playing) return;
+    if (t._timer) { clearInterval(t._timer); t._timer = null; }
+    t.playing = false;
+    t.recording = false;
+    t.paused = true;
+    emit(t._onPause);
     emitState();
   };
 
@@ -235,6 +269,8 @@ export function createTransport(cfg = {}) {
 
   t.onStart = (fn) => { t._onStart.push(fn); };
   t.onStop = (fn) => { t._onStop.push(fn); };
+  t.onPause = (fn) => { t._onPause.push(fn); };
+  t.onResume = (fn) => { t._onResume.push(fn); };
   t.onTick = (fn) => { t._onTick.push(fn); };
   t.onLoopWrap = (fn) => { t._onLoopWrap.push(fn); };
   t.onSeek = (fn) => { t._onSeek.push(fn); };

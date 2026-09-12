@@ -596,8 +596,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
         (loopClip.events || []).forEach(ev => {
           const evStart = (typeof ev.start === 'number' ? ev.start : 0) - offset;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+          // Strictly started before the seek point: notes at/after it are
+          // the step scheduler's job (it was just realigned there).
           if (evStart < 0 || evStart >= loopClip.length) return;
-          if (evStart <= loopPosTicks && evStart + Math.min(evDur, loopClip.length - evStart) > loopPosTicks) {
+          if (evStart < loopPosTicks && evStart + Math.min(evDur, loopClip.length - evStart) > loopPosTicks) {
             const remainingTicks = evStart + Math.min(evDur, loopClip.length - evStart) - loopPosTicks;
             const durSec = remainingTicks / tps;
             t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
@@ -844,7 +846,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
   }
 
   // ---- scheduler ------------------------------------------------------
-  function _tick() {
+  function _tick(info) {
     const elapsed = (engine._nowMs() - engine._startMs) / 1000;
     const loop = Math.floor(elapsed / engine.loopDur);
     const pos = elapsed - loop * engine.loopDur;
@@ -854,7 +856,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
       if (engine.onLoopWrap) engine.onLoopWrap(engine._loopCount);
     }
     engine._loopPos = pos;
-    _scheduleAhead(elapsed);
+    _scheduleAhead(elapsed, info);
     if (engine.onTick) {
       engine.onTick({
         loopPos: pos,
@@ -865,7 +867,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
   }
 
-  function _scheduleAhead(elapsed) {
+  function _scheduleAhead(elapsed, info) {
     const nowAbs = engine._playStartCtx + elapsed;
     const endAbs = nowAbs + 0.12;
 
@@ -931,7 +933,14 @@ export function createTrackEngine(ctx, dest, config = {}) {
           }
           const absTicks = clip.start + relStart;
           const absSec = absTicks / tps;
-          if (absSec > elapsed + 0.12) return;
+          // Loop-region membership (pattern/loop mode): events outside the
+          // looped ticks never sound, no matter the lookahead. Not flagged —
+          // every wrap re-evaluates the region fresh.
+          if (info && info.loopEnabled) {
+            const regionLen = Math.max(1, info.loopEndTicks - info.loopStartTicks);
+            if (absTicks < info.loopStartTicks || absTicks >= info.loopStartTicks + regionLen) return;
+          }
+          if (absSec >= elapsed + 0.12) return;
           const timeAbs = engine._playStartCtx + absSec;
           const durTicks = Math.min(typeof ev.dur === 'number' ? ev.dur : 0, clip.length - relStart);
           if (engine.playbackMode === 'song' && (durTicks <= 0 || absSec + durTicks / tps <= elapsed)) {
@@ -957,7 +966,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
         if (clip._scheduledAudio) return;
         const absSec = clip.start / tps;
         const clipLenSec = clip.length / tps;
-        if (absSec > elapsed + 0.12) return;
+        // Same loop-region membership as MIDI: clips outside the looped
+        // ticks never start, no matter the lookahead.
+        if (info && info.loopEnabled) {
+          const regionLen = Math.max(1, info.loopEndTicks - info.loopStartTicks);
+          if (clip.start < info.loopStartTicks || clip.start >= info.loopStartTicks + regionLen) return;
+        }
+        if (absSec >= elapsed + 0.12) return;
         if (absSec + clipLenSec < elapsed) {
           clip._scheduledAudio = true;
           return;
