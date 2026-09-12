@@ -31,7 +31,8 @@ export function gridToClipEvents(grid, { ppq = DEFAULT_PPQ } = {}) {
 }
 
 // Realtime notes (seconds) -> clip events in ticks. Velocity (0-127) passes
-// through when present, otherwise defaults to 100.
+// through when present, otherwise defaults to 100. The capture channel
+// (null = keyboard/all) passes through when present so takes keep it.
 export function rtToClipEvents(rt, { bpm = 120, ppq = DEFAULT_PPQ } = {}) {
   const tps = ticksPerSecond(bpm, ppq);
   return (rt || []).map(ev => ({
@@ -39,6 +40,9 @@ export function rtToClipEvents(rt, { bpm = 120, ppq = DEFAULT_PPQ } = {}) {
     start: (typeof ev.start === 'number' ? ev.start : 0) * tps,
     dur: (typeof ev.dur === 'number' ? ev.dur : 0) * tps,
     velocity: typeof ev.velocity === 'number' ? ev.velocity : 100,
+    ...(typeof ev.channel === 'number' ? { channel: ev.channel } : {}),
+    // Pre-quantize ticks survive the conversion untouched (reversible take).
+    ...(typeof ev.rawStart === 'number' ? { rawStart: ev.rawStart } : {}),
   }));
 }
 

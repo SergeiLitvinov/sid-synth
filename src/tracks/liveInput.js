@@ -21,7 +21,7 @@ export function createLiveInput(engine, { stampOn, stampOff, emitNote }) {
     held.set(id, queue);
     recipients.forEach(t => {
       if (t.monitor) t.voice.noteOn(name, engine.ctx.currentTime, undefined, velocity);
-      if (engine._recording && engine._armed.has(t.id)) stampOn(t, name, velocity);
+      if (engine._recording && engine._armed.has(t.id)) stampOn(t, name, velocity, channel);
     });
     emitNote(name);
   }
@@ -36,7 +36,7 @@ export function createLiveInput(engine, { stampOn, stampOff, emitNote }) {
       const t = engine.byId[trackId];
       if (!t) return;
       t.voice.noteOff(name, engine.ctx.currentTime);
-      if (engine._recording) stampOff(t, name);
+      if (engine._recording) stampOff(t, name, channel);
     });
   }
 

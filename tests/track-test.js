@@ -1542,6 +1542,98 @@ check('undo during playback restores notes without stale sound', () => {
   return d.spy.length === before && c4 === 1;
 });
 
+// ---- song-mode absolute takes (P0) -------------------------------------------
+check('song record lands in the selected clip at the absolute song position', () => {
+  const d = makeFixture(120);
+  d.engine.setPlaybackMode('song');
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  const sel = d.engine.addClip('trk_a', { start: 1920, length: 1920 });
+  d.engine.selectStepClip('trk_a', sel.id);
+  d.record();
+  d.advanceAndTick(2100); // abs 2016 ticks
+  d.engine.noteOn('C4');
+  d.advanceAndTick(240);  // abs ~2246 ticks
+  d.engine.noteOff('C4');
+  d.engine.stop();
+  const first = d.track.clips.find(c => c.start === 0);
+  const got = d.track.clips.find(c => c.id === sel.id);
+  if (!got || got.events.length !== 1) return false;
+  const ev = got.events[0];
+  return first.events.length === 0
+    && ev.note === 'C4'
+    && Math.abs(ev.start - 96) < 25
+    && Math.abs(ev.dur - 230) < 40;
+});
+check('recorded takes keep velocity and MIDI channel', () => {
+  const d = makeFixture(120);
+  d.engine.setPlaybackMode('song');
+  const sel = d.engine.addClip('trk_a', { start: 0, length: 3840 });
+  d.engine.selectStepClip('trk_a', sel.id);
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('E4', { channel: 3, velocity: 90 });
+  d.advanceAndTick(250);
+  d.engine.noteOff('E4', { channel: 3 });
+  d.engine.stop();
+  const ev = d.track.clips.find(c => c.id === sel.id).events[0];
+  return ev && ev.velocity === 90 && ev.channel === 3;
+});
+check('a hold across loop wraps records one event spanning the loops', () => {
+  const d = makeFixture(120);
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('G3');
+  d.advanceAndTick(2000); // crosses the 2s loop wrap; open note must survive
+  d.advanceAndTick(500);
+  d.engine.noteOff('G3');
+  d.engine.stop();
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  // Held 0.5s -> 3.0s: 2.5s = 2400 ticks, not truncated at the wrap.
+  return Math.abs(loop.events[0].dur - 2400) < 60;
+});
+check('record quantize keeps the raw start for reversible takes', () => {
+  const d = makeFixture(120);
+  d.engine.recordQuantize = { grid: 1, strength: 100, swing: 0 };
+  d.record();
+  d.advanceAndTick(1060); // 1.06s -> raw 1017.6 ticks, grid snaps to 960
+  d.engine.noteOn('C4');
+  d.advanceAndTick(200);
+  d.engine.noteOff('C4');
+  d.engine.stop();
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  const ev = loop.events[0];
+  return Math.abs(ev.start - 960) < 20 && Math.abs(ev.rawStart - 1017.6) < 25;
+});
+check('unquantizeClip restores pre-quantize starts', () => {
+  const d = makeFixture(120);
+  d.engine.recordQuantize = { grid: 1, strength: 100, swing: 0 };
+  d.record();
+  d.advanceAndTick(1060);
+  d.engine.noteOn('C4');
+  d.advanceAndTick(200);
+  d.engine.noteOff('C4');
+  d.engine.stop();
+  const loop = d.track.clips.find(c => c.start === 0);
+  const n = d.engine.unquantizeClip('trk_a', loop.id);
+  const ev = loop.events[0];
+  return n === 1 && Math.abs(ev.start - 1017.6) < 25 && ev.rawStart === undefined;
+});
+check('song stop with a held note closes it at the absolute stop position', () => {
+  const d = makeFixture(120);
+  d.engine.setPlaybackMode('song');
+  const sel = d.engine.addClip('trk_a', { start: 0, length: 3840 });
+  d.engine.selectStepClip('trk_a', sel.id);
+  d.record();
+  d.advanceAndTick(1000);
+  d.engine.noteOn('A3');
+  d.advanceAndTick(500);
+  d.engine.stop(); // no noteOff: finalize closes the hold
+  const ev = d.track.clips.find(c => c.id === sel.id).events[0];
+  return ev && ev.note === 'A3' && Math.abs(ev.start - 960) < 20 && Math.abs(ev.dur - 480) < 40;
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';

@@ -768,61 +768,181 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
   }
 
-  function _stampOn(t, noteName, velocity = 100) {
+  function _stampOn(t, noteName, velocity = 100, channel = null) {
     const buf = engine._recBuffer.get(t.id) || [];
     const start = _withinLoop();
-    buf.push({ note: noteName, start: Math.max(0, start), dur: null, velocity });
+    buf.push({
+      note: noteName, start: Math.max(0, start), dur: null, velocity,
+      channel: typeof channel === 'number' ? channel : null,
+      // Absolute take time only exists on a running clock; direct
+      // _recording pokes without playback keep the loop-relative stamp.
+      absStart: engine._playing ? _songTicksNow() : null, absEnd: null,
+    });
     engine._recBuffer.set(t.id, buf);
   }
 
-  function _stampOff(t, noteName) {
+  function _stampOff(t, noteName, channel = null) {
     const buf = engine._recBuffer.get(t.id) || [];
-    const idx = buf.map(e => e.note).lastIndexOf(noteName);
+    const want = channel ?? null;
+    let idx = -1;
+    for (let i = buf.length - 1; i >= 0; i--) {
+      if (buf[i].dur === null && buf[i].note === noteName && (buf[i].channel ?? null) === want) {
+        idx = i;
+        break;
+      }
+    }
     if (idx < 0) return;
     const e = buf[idx];
     const tEnd = _withinLoop();
     let dur = tEnd - e.start;
     if (dur < 0) dur += engine.loopDur;
     e.dur = Math.max(0.03, dur);
+    // Exact duration from the absolute take time: spans loop wraps and
+    // multi-loop holds, which the loop-relative computation cannot express.
+    // Only on a running clock (see _stampOn).
+    if (engine._playing && typeof e.absStart === 'number') {
+      e.absEnd = _songTicksNow();
+      if (e.absEnd >= e.absStart) {
+        const tps = ticksPerSecond(engine.bpm, engine.ppq);
+        e.dur = Math.max(0.03, (e.absEnd - e.absStart) / tps);
+      }
+    }
   }
 
   function _withinLoop() {
     return engine._loopPos;
   }
 
+  // Absolute song position in PPQ ticks at this moment: the unified transport
+  // state when driven by it (loop passes unfolded), the engine clock
+  // otherwise. Used to stamp takes at absolute song positions.
+  function _songTicksNow() {
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    const tr = engine._transport;
+    if (tr && typeof tr.getState === 'function') {
+      try {
+        const s = tr.getState();
+        if (s && typeof s.loopPosTicks === 'number') {
+          if (s.loopEnabled) {
+            const start = typeof s.loopStartTicks === 'number' ? s.loopStartTicks : 0;
+            const end = typeof s.loopEndTicks === 'number' ? s.loopEndTicks : start + 1;
+            return (s.loopCount || 0) * Math.max(1, end - start) + s.loopPosTicks;
+          }
+          return s.loopPosTicks;
+        }
+      } catch (_) {}
+    }
+    return Math.max(0, (engine._nowMs() - engine._startMs) / 1000) * tps;
+  }
+
   function _commitBuffer(finalizeHold) {
     engine._recBuffer.forEach((buf, trackId) => {
       const t = engine.byId[trackId];
       if (!t) return;
-      const committed = buf
-        .filter(e => e.dur !== null)
-        .map(e => ({ note: e.note, start: e.start, dur: e.dur, velocity: e.velocity }));
+      // Open notes are carried across non-final (loop-wrap) commits so their
+      // durations keep spanning wraps; only closed notes are committed.
+      // A final commit (stop) closes held notes at the stop position.
+      const keep = [];
+      const closed = [];
       buf.forEach(e => {
-        if (e.dur === null) {
-          let dur = engine.loopDur - e.start;
-          if (finalizeHold && dur < 0.03 && e.start > 0) dur = 0.03;
-          if (dur > 0) committed.push({ note: e.note, start: e.start, dur, velocity: e.velocity });
+        if (e.dur !== null) { closed.push(e); return; }
+        if (!finalizeHold) { keep.push(e); return; }
+        if (engine.playbackMode === 'song') {
+          // Linear timeline: close the hold at the absolute stop position.
+          if (typeof e.absStart === 'number') {
+            const stopAbs = _songTicksNow();
+            e.absEnd = stopAbs;
+            if (stopAbs >= e.absStart) {
+              const tps = ticksPerSecond(engine.bpm, engine.ppq);
+              e.dur = Math.max(0.03, (stopAbs - e.absStart) / tps);
+            } else e.dur = 0.03;
+          } else e.dur = 0.03;
+          closed.push(e);
+          return;
         }
+        // Pattern take: a hold at stop extends to the loop end.
+        let dur = engine.loopDur - e.start;
+        if (dur < 0.03 && e.start > 0) dur = 0.03;
+        if (dur > 0) { e.dur = dur; closed.push(e); }
       });
-      if (committed.length) {
-        let out = committed;
-        if (engine.recordQuantize) {
-          const tps = ticksPerSecond(engine.bpm, engine.ppq);
-          const q = engine.recordQuantize;
-          out = committed.map(e => {
-            const qd = quantizeTick(e.start * tps, engine.ppq, q.grid, q.strength, q.swing);
-            return { ...e, start: qd / tps };
-          });
-        }
-        let clip = engine.getStepClip(trackId);
-        if (!clip) clip = engine.addClip(t.id, { start: 0 });
-        if (clip) {
-          clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
-        }
+      if (closed.length) {
+        if (engine.playbackMode === 'song') _commitSongTake(t, closed);
+        else _commitPatternTake(t, closed);
       }
+      if (keep.length) engine._recBuffer.set(trackId, keep);
+      else engine._recBuffer.delete(trackId);
     });
-    engine._recBuffer.clear();
   }
+
+  // Pattern take: loop-relative seconds into the selected step clip.
+  // Quantized commits keep the original ticks as `rawStart` (reversible).
+  function _commitPatternTake(t, closed) {
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    let out = closed.map(e => ({
+      note: e.note, start: e.start, dur: e.dur, velocity: e.velocity, channel: e.channel,
+    }));
+    if (engine.recordQuantize) {
+      const q = engine.recordQuantize;
+      out = out.map(e => {
+        const rawTicks = e.start * tps;
+        const qd = quantizeTick(rawTicks, engine.ppq, q.grid, q.strength, q.swing);
+        return { ...e, start: qd / tps, rawStart: rawTicks };
+      });
+    }
+    let clip = engine.getStepClip(t.id);
+    if (!clip) clip = engine.addClip(t.id, { start: 0 });
+    if (clip) {
+      clip.events = mergeClipEvents(clip.events, rtToClipEvents(out, { bpm: engine.bpm, ppq: engine.ppq }));
+    }
+  }
+
+  // Song take: absolute song ticks into the selected clip, stored
+  // clip-relative (ev.start - offset addresses the clip window). Full
+  // durations are kept; playback already windows them to the clip.
+  function _commitSongTake(t, closed) {
+    let clip = engine.getStepClip(t.id);
+    if (!clip) clip = engine.addClip(t.id, { start: 0 });
+    if (!clip) return;
+    const offset = clip.offset || 0;
+    const tps = ticksPerSecond(engine.bpm, engine.ppq);
+    let out = closed
+      .map(e => {
+        // Absolute song ticks when stamped on a running clock; otherwise the
+        // loop-relative stamp converted at the take tempo (never drop notes).
+        const a0 = typeof e.absStart === 'number' ? e.absStart : e.start * tps;
+        const a1 = (typeof e.absEnd === 'number' && e.absEnd >= a0)
+          ? e.absEnd
+          : a0 + Math.max(1, (e.dur || 0) * tps);
+        const ev = {
+          note: e.note,
+          start: a0 - clip.start + offset,
+          dur: Math.max(1, a1 - a0),
+          velocity: e.velocity,
+        };
+        if (typeof e.channel === 'number') ev.channel = e.channel;
+        return ev;
+      });
+    if (engine.recordQuantize) {
+      const q = engine.recordQuantize;
+      out = out.map(e => ({
+        ...e, rawStart: e.start, start: quantizeTick(e.start, engine.ppq, q.grid, q.strength, q.swing),
+      }));
+    }
+    clip.events = mergeClipEvents(clip.events, out);
+  }
+
+  // Restore pre-quantize starts for events committed with record quantize
+  // (they carry `rawStart`). Returns the number of restored events.
+  engine.unquantizeClip = (trackId, clipId) => {
+    const trk = engine.byId[trackId];
+    const clip = trk && (trk.clips || []).find(c => c.id === clipId);
+    if (!clip) return 0;
+    let n = 0;
+    (clip.events || []).forEach(e => {
+      if (typeof e.rawStart === 'number') { e.start = e.rawStart; delete e.rawStart; n++; }
+    });
+    return n;
+  };
 
   // Clear the selected step clip so a REPLACE-mode record starts empty —
   // the same clip _commitBuffer writes the take into.
