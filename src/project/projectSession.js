@@ -80,5 +80,5 @@ export function createProjectSession({
   }
 
 
-  return { captureProject, applyProject };
+  return { captureProject, applyProject, getProjectName: () => projectName, setProjectName: (n) => { projectName = String(n || 'SID Project'); } };
 }

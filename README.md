@@ -31,7 +31,7 @@ pwsh -File tests/serve-ps.ps1
 
 В RECORDER доступны SONG и PATTERN. Новые проекты используют SONG: все MIDI-клипы, включая клипы в позиции 0, играют один раз в своих границах. PATTERN сохраняет прежний повтор первой 16-шаговой сетки; проекты без сохранённого режима открываются в PATTERN. Есть track mute/solo и inserts, но нет полноценной консоли с шинами/sends/automation. Классический rack монофонический, синтезаторы треков — восьмиголосные.
 
-Autosave проекта хранится локально в localStorage, аудио — в IndexedDB того же origin. SAVE PATCH сохраняет только rack. Переносимый project bundle ещё запланирован. WAV записывает четыре такта живого master в 16-bit stereo; offline render всей песни и stems пока отсутствуют.
+Autosave проекта хранится локально в localStorage, аудио — в IndexedDB того же origin. SAVE PATCH сохраняет только rack. NEW / OPEN / SAVE / SAVE AS переносят всю песню с аудио одним `.sidproject.json` (проверен переносом в чистый профиль). WAV записывает четыре такта живого master в 16-bit stereo; offline render всей песни и stems пока отсутствуют.
 
 ## Структура
 

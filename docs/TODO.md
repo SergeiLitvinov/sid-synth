@@ -17,7 +17,7 @@
 
 ## P0 — проект и сохранение
 
-- [ ] New/Open/Save/Save As для всего проекта; portable bundle с manifest и media. SAVE PATCH относится только к рэку. Проверить перенос в чистый браузерный профиль.
+- [x] New/Open/Save/Save As для всего проекта; portable bundle с manifest и media. SAVE PATCH относится только к рэку. Проверить перенос в чистый браузерный профиль. Готово 2026-09-12: `src/project/projectFiles.js` (bundle song+base64 media, hash-верификация, missing/tamper отчёты, raw project docs), кнопки NEW/OPEN/SAVE/SAVE AS + статус, dirty-confirm, history reset/markSaved. tests/projectFiles-test 8/8, перенос проверен сквозным UI-путём в чистый профиль (трек/нота/tempo/имя/аудио 512Б, 0 ошибок).
 - [ ] Revision-based autosave, dirty/saved/error status, журнал, резервные снимки и recovery. Убрать MutationObserver и периодическую запись неизменённого состояния; flush перед уходом.
 - [ ] Полная валидация: конечные числа, диапазоны, уникальные ID, ссылки на assets/devices/tracks, версии схемы. Сначала подготовить проект, затем атомарно заменить состояние.
 - [ ] Стабильные ID рэка при загрузке и clip/event/device/route IDs. Объединить дубли defaultClip/defaultTrack/normalizers; runtime-флаги не должны попадать в snapshots.

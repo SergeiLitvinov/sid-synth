@@ -17,6 +17,8 @@ import { createMarkerStore } from './project/markers.js';
 import { addClipCommand } from './project/trackCommands.js';
 import { ticksPerSecond } from './project/clipEvents.js';
 import { createAssetStore } from './audio/assetStore.js';
+import { exportBundle, importBundle, downloadText, readFileText, sanitizeFileName } from './project/projectFiles.js';
+import { defaultProject } from './project/defaultProject.js';
 import { createMediaPool } from './audio/mediaPool.js';
 import { createInputUI } from './audio/inputUI.js';
 
@@ -203,7 +205,7 @@ import { createInputUI } from './audio/inputUI.js';
   // here so save/load round-trips keep every referenced hash.
   // (projectAssets itself is declared above the arranger wiring.)
 
-  const { captureProject, applyProject } = createProjectSession({
+  const { captureProject, applyProject, getProjectName, setProjectName } = createProjectSession({
     components, router, createComponent, clearRack, trackEngine, transport,
     markers, history, recorderUI, arranger,
     getAssets: () => projectAssets,
@@ -271,4 +273,75 @@ import { createInputUI } from './audio/inputUI.js';
 
   router.drawConnections();
   setInterval(() => projectStore.markDirty(), 3000);
+
+  // Portable project files (P0): NEW / OPEN / SAVE / SAVE AS move the whole
+  // song plus its audio as one JSON bundle. SAVE PATCH stays rack-only.
+  // Autosave (localStorage + IndexedDB) never leaves this browser profile.
+  function projectStatus(text) {
+    const el = document.getElementById('saveStatus');
+    if (el) el.textContent = text;
+  }
+  function confirmDiscard() {
+    try {
+      if (history.state().dirty) return window.confirm('Unsaved changes will be lost. Continue?');
+    } catch (e) {}
+    return true;
+  }
+  async function saveBundleAs(name) {
+    setProjectName(name);
+    const bundle = await exportBundle({ project: captureProject(), store: assetStore });
+    const filename = sanitizeFileName(name) + '.sidproject.json';
+    downloadText(filename, JSON.stringify(bundle));
+    projectStore.saveNow();
+    history.markSaved();
+    const miss = bundle.mediaMissing ? bundle.mediaMissing.length : 0;
+    projectStatus('Saved ' + filename + ' (' + bundle.media.length + ' audio files'
+      + (miss ? ', ' + miss + ' missing from this browser' : '') + ')');
+  }
+  function refreshPool() {
+    if (mediaPool && typeof mediaPool.refresh === 'function') {
+      try { mediaPool.refresh(); } catch (e) {}
+    }
+  }
+  const projNew = document.getElementById('projNew');
+  const projOpen = document.getElementById('projOpen');
+  const projSave = document.getElementById('projSave');
+  const projSaveAs = document.getElementById('projSaveAs');
+  const projFile = document.getElementById('projFile');
+  if (projNew) projNew.onclick = () => {
+    if (!confirmDiscard()) return;
+    applyProject(defaultProject());
+    projectStore.saveNow();
+    history.reset();
+    history.markSaved();
+    refreshPool();
+    projectStatus('New project');
+  };
+  if (projOpen && projFile) {
+    projOpen.onclick = () => projFile.click();
+    projFile.onchange = () => {
+      const file = projFile.files && projFile.files[0];
+      projFile.value = '';
+      if (!file) return;
+      (async () => {
+        const { project, imported, skipped } = await importBundle(await readFileText(file), { store: assetStore });
+        if (!confirmDiscard()) return;
+        applyProject(project);
+        projectStore.saveNow();
+        history.reset();
+        history.markSaved();
+        refreshPool();
+        projectStatus('Opened ' + (project.name || file.name) + ' (' + imported.length + ' audio files'
+          + (skipped.length ? ', ' + skipped.length + ' skipped' : '') + ')');
+      })().catch(err => projectStatus('Open failed: ' + (err.message || err)));
+    };
+  }
+  if (projSave) projSave.onclick = () => {
+    saveBundleAs(getProjectName()).catch(err => projectStatus('Save failed: ' + (err.message || err)));
+  };
+  if (projSaveAs) projSaveAs.onclick = () => {
+    let name = null;
+    try { name = window.prompt('Project name', getProjectName()); } catch (e) {}
+    if (name) saveBundleAs(name).catch(err => projectStatus('Save failed: ' + (err.message || err)));
+  };
 })();
