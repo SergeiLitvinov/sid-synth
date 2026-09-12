@@ -59,13 +59,25 @@ import { createInputUI } from './audio/inputUI.js';
     button: document.getElementById('midiConnect'),
     statusEl: document.getElementById('midiStatus'),
     ctx,
-    onNoteOn: (note, channel, velocity) => trackEngine.noteOn(note, { channel, velocity }),
-    onNoteOff: (note, channel) => trackEngine.noteOff(note, { channel }),
+    onNoteOn: (note, channel, velocity, deviceId) => trackEngine.noteOn(note, { channel, velocity, device: deviceId }),
+    onNoteOff: (note, channel, deviceId) => trackEngine.noteOff(note, { channel, device: deviceId }),
     onCC: (channel, cc, value) => {
       if (trackEngine) trackEngine.routeCC(channel, cc, value);
     },
     onPitchBend: (channel, value) => {
       if (trackEngine) trackEngine.routePitchBend(channel, value);
+    },
+    onPressure: (channel, value) => {
+      if (trackEngine) trackEngine.routePressure(channel, value);
+    },
+    onPanic: () => {
+      if (trackEngine) trackEngine.panic();
+    },
+    onDeviceLost: (deviceId, held) => {
+      // A disconnected device never sends note-off: release exactly the
+      // notes it was holding so no voice rings forever.
+      if (!trackEngine) return;
+      held.forEach(h => trackEngine.noteOff(h.note, { channel: h.channel, device: deviceId }));
     },
   });
 

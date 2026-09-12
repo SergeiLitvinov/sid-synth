@@ -3,16 +3,26 @@ import { noteForMidi } from './notes.js';
 // MIDI input service with device selection, per-track channel routing,
 // and CC/pitch bend/modulation/sustain support (backlog #174).
 //
+// Device identity flows end to end: every callback carries the source
+// deviceId, and notes held from a disconnected device are reported via
+// onDeviceLost so the app can release those exact notes.
+//
 // Returns an API object with:
 //   selectDevice(id)  — connect to a specific MIDI input (null = all)
 //   refreshInputs()   — re-enumerate available MIDI devices
 //   getInputs()       — list available devices
-//   setCallbacks(obj) — { onNoteOn, onNoteOff, onCC, onPitchBend }
+//   setCallbacks(obj) — { onNoteOn, onNoteOff, onCC, onPitchBend,
+//                         onPressure, onPanic, onDeviceLost }
 //   destroy()         — disconnect all handlers
 //
-// CC callback: onCC(channel, cc, value) — cc is 0-127, value 0-127
-// Pitch bend: onPitchBend(channel, value) — value is -1.0..1.0
-export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onPitchBend }) {
+// CC callback: onCC(channel, cc, value, deviceId) — cc is 0-127, value 0-127
+// Pitch bend: onPitchBend(channel, value, deviceId) — value is -1.0..1.0
+// Channel pressure: onPressure(channel, value, deviceId) — value 0..1.
+//   Without an onPressure callback it aliases to CC1 (legacy behavior).
+// Panic: CC123 (all notes off) calls onPanic(channel, deviceId).
+// Disconnect: onDeviceLost(deviceId, [{ channel, note }]) lists notes that
+//   were held from the removed device and never got a note-off.
+export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onPitchBend, onPressure, onPanic, onDeviceLost }) {
   let midiAccess = null;
   let selectedDeviceId = null;
   const subscribers = new Set();
@@ -20,8 +30,26 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
   let onNoteOffCb = onNoteOff || (() => {});
   let onCCCb = onCC || (() => {});
   let onPitchBendCb = onPitchBend || (() => {});
+  let onPressureCb = onPressure || null;
+  let onPanicCb = onPanic || (() => {});
+  let onDeviceLostCb = onDeviceLost || (() => {});
+  // deviceId -> Map("channel:note" -> { channel, note }) of held notes.
+  const activeNotes = new Map();
 
-  function handleMessage(msg) {
+  function trackNote(deviceId, channel, note) {
+    let dev = activeNotes.get(deviceId);
+    if (!dev) { dev = new Map(); activeNotes.set(deviceId, dev); }
+    dev.set(channel + ':' + note, { channel, note });
+  }
+
+  function untrackNote(deviceId, channel, note) {
+    const dev = activeNotes.get(deviceId);
+    if (!dev) return;
+    dev.delete(channel + ':' + note);
+    if (!dev.size) activeNotes.delete(deviceId);
+  }
+
+  function handleMessage(deviceId, msg) {
     const [cmd, data1, data2] = msg.data;
     const channel = (cmd & 0x0F) + 1; // 1-based
     const status = cmd & 0xF0;
@@ -31,31 +59,44 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
     // Note on
     if (status === 0x90 && data2 > 0) {
       const noteName = noteForMidi(data1);
-      if (noteName) onNoteOnCb(noteName, channel, data2);
+      if (noteName) {
+        trackNote(deviceId, channel, noteName);
+        onNoteOnCb(noteName, channel, data2, deviceId);
+      }
       return;
     }
     // Note off (0x80, or 0x90 with vel 0)
     if (status === 0x80 || (status === 0x90 && data2 === 0)) {
       const noteName = noteForMidi(data1);
-      if (noteName) onNoteOffCb(noteName, channel);
+      if (noteName) {
+        untrackNote(deviceId, channel, noteName);
+        onNoteOffCb(noteName, channel, deviceId);
+      }
       return;
     }
     // Control Change (CC)
     if (status === 0xB0) {
-      onCCCb(channel, data1, data2);
+      if (data1 === 123) {
+        // All notes off: panic. Held notes from every device are
+        // unreachable, so drop the tracking (fresh note-ons re-track).
+        activeNotes.clear();
+        onPanicCb(channel, deviceId);
+        return;
+      }
+      onCCCb(channel, data1, data2, deviceId);
       return;
     }
     // Pitch bend (14-bit: LSB = data1, MSB = data2)
     if (status === 0xE0) {
       const raw = (data2 << 7) | data1; // 0..16383
       const value = (raw - 8192) / 8192; // -1.0..1.0
-      onPitchBendCb(channel, value);
+      onPitchBendCb(channel, value, deviceId);
       return;
     }
     // Channel pressure (aftertouch)
     if (status === 0xD0) {
-      // Treat as modulation-like expression; CC 1 equivalent
-      onCCCb(channel, 1, data1);
+      if (onPressureCb) onPressureCb(channel, data1 / 127, deviceId);
+      else onCCCb(channel, 1, data1, deviceId); // legacy CC1 alias
       return;
     }
   }
@@ -63,7 +104,7 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
   function connectInput(input) {
     if (input._sidBound) return;
     input._sidBound = true;
-    input.onmidimessage = handleMessage;
+    input.onmidimessage = (msg) => handleMessage(input.id, msg);
   }
 
   function disconnectInput(input) {
@@ -91,15 +132,32 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
       connectAll();
       updateStatus();
       subscribers.forEach(fn => fn());
-      midiAccess.onstatechange = () => {
-        connectAll();
-        updateStatus();
-        subscribers.forEach(fn => fn());
-      };
+      midiAccess.onstatechange = handleStateChange;
     } catch (e) {
       if (statusEl) { statusEl.textContent = 'MIDI ERR'; statusEl.style.color = '#ff4444'; }
     }
     return api;
+  }
+
+  // Device hot-plug: release notes held from removed devices (they will
+  // never send note-off) and report them so the app releases those voices.
+  function handleStateChange() {
+    if (midiAccess) {
+      const live = new Set();
+      midiAccess.inputs.forEach(input => live.add(input.id));
+      activeNotes.forEach((notes, deviceId) => {
+        if (!live.has(deviceId)) {
+          const held = [...notes.values()];
+          activeNotes.delete(deviceId);
+          if (held.length) {
+            try { onDeviceLostCb(deviceId, held); } catch (e) {}
+          }
+        }
+      });
+    }
+    connectAll();
+    updateStatus();
+    subscribers.forEach(fn => fn());
   }
 
   function updateStatus() {
@@ -144,6 +202,9 @@ export function initMidi({ button, statusEl, ctx, onNoteOn, onNoteOff, onCC, onP
       if (cbs.onNoteOff) onNoteOffCb = cbs.onNoteOff;
       if (cbs.onCC) onCCCb = cbs.onCC;
       if (cbs.onPitchBend) onPitchBendCb = cbs.onPitchBend;
+      if (cbs.onPressure) onPressureCb = cbs.onPressure;
+      if (cbs.onPanic) onPanicCb = cbs.onPanic;
+      if (cbs.onDeviceLost) onDeviceLostCb = cbs.onDeviceLost;
     },
     destroy() {
       if (midiAccess) midiAccess.inputs.forEach(disconnectInput);

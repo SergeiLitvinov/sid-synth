@@ -25,6 +25,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
       <button class="rec-btn" id="recRecord">● REC</button>
       <button class="rec-btn" id="recPlay">▶ PLAY</button>
       <button class="rec-btn" id="recStop">■ STOP</button>
+      <button class="rec-btn" id="recPanic" title="All notes off: silence every voice and reset expression (also on MIDI CC123)">PANIC</button>
       <button class="rec-btn" id="recCancel" title="Discard the take without committing (restores REPLACE-cleared notes)">✕ CANCEL</button>
       <button class="rec-btn rec-add" id="recAdd">+ ADD TRACK</button>
       <button class="rec-btn" id="recUndo" title="Undo (Ctrl+Z)" disabled>↶</button>
@@ -50,6 +51,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   const recRecord = el.querySelector('#recRecord');
   const recPlay = el.querySelector('#recPlay');
   const recStop = el.querySelector('#recStop');
+  const recPanic = el.querySelector('#recPanic');
   const recCancel = el.querySelector('#recCancel');
   const recBpm = el.querySelector('#recBpm');
   const recPos = el.querySelector('#recPos');
@@ -136,6 +138,10 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   });
 
   recStop.addEventListener('click', () => engine.stop());
+
+  if (recPanic) recPanic.addEventListener('click', () => {
+    if (typeof engine.panic === 'function') engine.panic();
+  });
 
   recCancel.addEventListener('click', () => {
     if (typeof engine.cancelTake === 'function') engine.cancelTake();

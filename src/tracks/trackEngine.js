@@ -610,6 +610,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
           if (evStart < loopPosTicks && evStart + Math.min(evDur, loopClip.length - evStart) > loopPosTicks) {
             const remainingTicks = evStart + Math.min(evDur, loopClip.length - evStart) - loopPosTicks;
             const durSec = remainingTicks / tps;
+            _applyNoteExpression(t, ev);
             t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
           }
         });
@@ -630,6 +631,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
           if (absStart <= absTick && absEnd > absTick) {
             const remainingTicks = absEnd - absTick;
             const durSec = remainingTicks / tps;
+            _applyNoteExpression(t, ev);
             t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
             ev._scheduledLin = true;
           }
@@ -745,6 +747,43 @@ export function createTrackEngine(ctx, dest, config = {}) {
     matching.forEach(t => t.voice.pitchBend(value));
   };
 
+  // Route MIDI channel pressure (aftertouch) to matching tracks.
+  engine.routePressure = (channel, value) => {
+    const tracks = engine.tracks;
+    const matching = tracks.filter(t => t.midiChannel === null || t.midiChannel === channel);
+    matching.forEach(t => t.voice.pressure(value));
+  };
+
+  // Panic / all-notes-off (P0 MIDI): silence every voice now, reset live
+  // expression to neutral, forget held live notes, and close open take
+  // notes at the panic point so the take holds what was heard.
+  engine.panic = () => {
+    const now = engine.ctx.currentTime;
+    engine.tracks.forEach(t => {
+      t.voice.allOff(now);
+      t.voice.pitchBend(0);
+      t.voice.modulation(0);
+      t.voice.pressure(0);
+      t.voice.sustain(false);
+    });
+    engine._recBuffer.forEach((buf, trackId) => {
+      const t = engine.byId[trackId];
+      if (!t) return;
+      buf.forEach(e => { if (e.dur === null) _closeBufferEvent(e); });
+    });
+    liveInput.clear();
+    _emitState();
+  };
+
+  // Replay a recorded expression snapshot before the note it belongs to so
+  // takes sound like the performance. Absent/neutral values are skipped.
+  function _applyNoteExpression(t, ev) {
+    if (!ev) return;
+    if (typeof ev.bend === 'number' && ev.bend !== 0) t.voice.pitchBend(ev.bend);
+    if (typeof ev.mod === 'number' && ev.mod > 0) t.voice.modulation(ev.mod);
+    if (typeof ev.pressure === 'number' && ev.pressure > 0) t.voice.pressure(ev.pressure);
+  }
+
   // ---- piano roll audition (backlog #30) ----------------------------------
   // Preview a note through one specific track's voice — the track the selected
   // clip belongs to — bypassing the global live-note routing (active/armed
@@ -778,12 +817,18 @@ export function createTrackEngine(ctx, dest, config = {}) {
     }
   }
 
-  function _stampOn(t, noteName, velocity = 100, channel = null) {
+  function _stampOn(t, noteName, velocity = 100, channel = null, device = null) {
     const buf = engine._recBuffer.get(t.id) || [];
     const start = _withinLoop();
     buf.push({
       note: noteName, start: Math.max(0, start), dur: null, velocity,
       channel: typeof channel === 'number' ? channel : null,
+      device: typeof device === 'string' ? device : null,
+      // Live expression snapshot (P0 MIDI): replayed with the note so the
+      // take sounds like the performance. Only non-neutral values commit.
+      bend: t.voice.getPitchBend(),
+      mod: t.voice.getModulation(),
+      pressure: t.voice.getPressure(),
       // Absolute take time only exists on a running clock; direct
       // _recording pokes without playback keep the loop-relative stamp.
       absStart: engine._playing ? _songTicksNow() : null, absEnd: null,
@@ -791,18 +836,25 @@ export function createTrackEngine(ctx, dest, config = {}) {
     engine._recBuffer.set(t.id, buf);
   }
 
-  function _stampOff(t, noteName, channel = null) {
+  function _stampOff(t, noteName, channel = null, device = null) {
     const buf = engine._recBuffer.get(t.id) || [];
-    const want = channel ?? null;
+    const wantCh = channel ?? null;
+    const wantDev = device ?? null;
     let idx = -1;
     for (let i = buf.length - 1; i >= 0; i--) {
-      if (buf[i].dur === null && buf[i].note === noteName && (buf[i].channel ?? null) === want) {
+      if (buf[i].dur === null && buf[i].note === noteName
+        && (buf[i].channel ?? null) === wantCh && (buf[i].device ?? null) === wantDev) {
         idx = i;
         break;
       }
     }
     if (idx < 0) return;
-    const e = buf[idx];
+    _closeBufferEvent(buf[idx]);
+  }
+
+  // Close one open take note at the current position (loop-relative length
+  // plus the exact absolute duration when stamped on a running clock).
+  function _closeBufferEvent(e) {
     const tEnd = _withinLoop();
     let dur = tEnd - e.start;
     if (dur < 0) dur += engine.loopDur;
@@ -910,6 +962,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const tps = ticksPerSecond(engine.bpm, engine.ppq);
     let out = closed.map(e => ({
       note: e.note, start: e.start, dur: e.dur, velocity: e.velocity, channel: e.channel,
+      device: e.device, bend: e.bend, mod: e.mod, pressure: e.pressure,
     }));
     if (engine.recordQuantize) {
       const q = engine.recordQuantize;
@@ -957,6 +1010,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
           velocity: e.velocity,
         };
         if (typeof e.channel === 'number') ev.channel = e.channel;
+        if (typeof e.device === 'string') ev.device = e.device;
+        if (typeof e.bend === 'number' && e.bend !== 0) ev.bend = e.bend;
+        if (typeof e.mod === 'number' && e.mod > 0) ev.mod = e.mod;
+        if (typeof e.pressure === 'number' && e.pressure > 0) ev.pressure = e.pressure;
         return ev;
       });
     if (engine.recordQuantize) {
@@ -1096,7 +1153,10 @@ export function createTrackEngine(ctx, dest, config = {}) {
           if (pos < 0 || pos >= stepClip.length) return;
           if (pos >= engine._cursor * step && pos < (engine._cursor + 1) * step) {
             const duration = Math.min(ev.dur, stepClip.length - pos) / tps;
-            if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + pos / tps, duration, ev.velocity);
+            if (duration > 0) {
+              _applyNoteExpression(t, ev);
+              scheduleNoteOn(t, ev.note, gridLoopAbs + pos / tps, duration, ev.velocity);
+            }
           }
         });
       });
@@ -1147,8 +1207,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
             ev._scheduledLin = true;
             return;
           }
-          if (durTicks > 0) scheduleNoteOn(t, ev.note, timeAbs, durTicks / tps, ev.velocity);
-          else scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
+          if (durTicks > 0) {
+            _applyNoteExpression(t, ev);
+            scheduleNoteOn(t, ev.note, timeAbs, durTicks / tps, ev.velocity);
+          } else {
+            _applyNoteExpression(t, ev);
+            scheduleNoteOn(t, ev.note, timeAbs, undefined, ev.velocity);
+          }
           ev._scheduledLin = true;
         });
       });

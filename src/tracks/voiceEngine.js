@@ -57,6 +57,7 @@ export class TrackVoices {
     // CC state (backlog #174): pitch bend, modulation, sustain
     this._pitchBend = 0;      // -1.0..1.0
     this._modulation = 0;     // 0..1
+    this._pressure = 0;       // 0..1 channel pressure (aftertouch)
     this._sustain = false;     // sustain pedal held
     this._pitchBendRange = 2;  // semitones (±2 default)
   }
@@ -278,16 +279,29 @@ export class TrackVoices {
     });
   }
 
-  // Modulation wheel (CC1, backlog #174): value 0..1 scales the filter
-  // frequency — 0 = track default, 1 = full cutoff (20000 Hz).
+  // Modulation wheel (CC1, backlog #174): value 0..1 opens the filter
+  // frequency — 0 = track default, 1 = full cutoff (20000 Hz). Channel
+  // pressure shares the target: the stronger of the two wins.
   modulation(value) {
     this._modulation = Math.max(0, Math.min(1, value));
+    this._applyFilterMod();
+  }
+
+  // Channel pressure / aftertouch (P0 MIDI): value 0..1. Live effect opens
+  // the filter like modulation; recorded per note and replayed on takes.
+  pressure(value) {
+    this._pressure = Math.max(0, Math.min(1, value));
+    this._applyFilterMod();
+  }
+
+  _applyFilterMod() {
+    const eff = Math.max(this._modulation, this._pressure);
     const now = this.ctx.currentTime;
     const fp = this._filterParams();
     this.voices.forEach(v => {
       if (v.filter) {
         const base = fp ? fp.freq : 20000;
-        const target = base + this._modulation * (20000 - base);
+        const target = base + eff * (20000 - base);
         try { v.filter.frequency.setTargetAtTime(target, now, 0.02); } catch (e) {}
       }
     });
@@ -316,6 +330,7 @@ export class TrackVoices {
   getSustain() { return this._sustain; }
   getPitchBend() { return this._pitchBend; }
   getModulation() { return this._modulation; }
+  getPressure() { return this._pressure; }
 
   dispose() {
     try {

@@ -1702,6 +1702,85 @@ check('cancelTake with no take in progress never stops playback', () => {
   return stillPlaying;
 });
 
+// ---- MIDI panic + expression takes (P0) ----------------------------------------
+check('panic silences voices and resets live expression', () => {
+  const d = makeFixture(120);
+  d.engine.noteOn('C4');
+  d.engine.routePitchBend(1, 0.5);
+  d.engine.routeCC(1, 1, 127);
+  d.engine.routeCC(1, 64, 127);
+  let offs = 0;
+  const origAllOff = d.track.voice.allOff.bind(d.track.voice);
+  d.track.voice.allOff = (at) => { offs++; origAllOff(at); };
+  d.engine.panic();
+  const v = d.track.voice;
+  const quiet = v.activeVoices(d.ctx.currentTime) === 0;
+  d.engine.noteOff('C4'); // held map cleared: no double release path
+  return offs === 1 && quiet && v.getPitchBend() === 0
+    && v.getModulation() === 0 && v.getPressure() === 0 && v.getSustain() === false;
+});
+check('panic closes open take notes at the panic point', () => {
+  const d = makeFixture(120);
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('C4');
+  d.advanceAndTick(500);
+  d.engine.panic();
+  d.engine.noteOff('C4'); // already closed: must not reopen or extend
+  d.engine.stop();
+  const loop = d.track.clips.find(c => c.start === 0);
+  if (!loop || loop.events.length !== 1) return false;
+  return Math.abs(loop.events[0].dur - 480) < 60;
+});
+check('same note on two devices releases independently', () => {
+  const d = makeFixture(120);
+  let offs = 0;
+  const origOff = d.track.voice.noteOff.bind(d.track.voice);
+  d.track.voice.noteOff = (note, at) => { offs++; origOff(note, at); };
+  d.engine.noteOn('C4', { channel: 1, device: 'devA' });
+  d.engine.noteOn('C4', { channel: 1, device: 'devB' });
+  d.engine.noteOff('C4', { channel: 1, device: 'devA' });
+  const one = offs === 1;
+  d.engine.noteOff('C4', { channel: 1, device: 'devB' });
+  return one && offs === 2;
+});
+check('routePressure stores pressure and takes record it', () => {
+  const d = makeFixture(120);
+  d.engine.routePressure(1, 0.75);
+  if (Math.abs(d.track.voice.getPressure() - 0.75) > 1e-9) return false;
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.noteOn('E4', { channel: 1 });
+  d.advanceAndTick(250);
+  d.engine.noteOff('E4', { channel: 1 });
+  d.engine.stop();
+  const ev = d.track.clips.find(c => c.start === 0).events[0];
+  return ev && Math.abs(ev.pressure - 0.75) < 1e-9;
+});
+check('recorded bend and mod replay with the scheduled note', () => {
+  const d = makeFixture(120);
+  d.record();
+  d.advanceAndTick(500);
+  d.engine.routePitchBend(1, 0.5);
+  d.engine.routeCC(1, 1, 64);
+  d.engine.noteOn('G3');
+  d.advanceAndTick(250);
+  d.engine.noteOff('G3');
+  d.engine.stop();
+  const ev = d.track.clips.find(c => c.start === 0).events[0];
+  if (!ev || ev.bend !== 0.5 || Math.abs(ev.mod - 64 / 127) > 1e-9) return false;
+  const bends = [];
+  const mods = [];
+  const origBend = d.track.voice.pitchBend.bind(d.track.voice);
+  const origMod = d.track.voice.modulation.bind(d.track.voice);
+  d.track.voice.pitchBend = (v) => { bends.push(v); origBend(v); };
+  d.track.voice.modulation = (v) => { mods.push(v); origMod(v); };
+  d.play();
+  for (let i = 0; i < 8; i++) d.advanceAndTick(100);
+  d.engine.stop();
+  return bends.some(v => v === 0.5) && mods.some(v => Math.abs(v - 64 / 127) < 1e-9);
+});
+
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
 if (failed.length > 0) {
   summary.style.color = '#ff4444';
