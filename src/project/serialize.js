@@ -177,8 +177,9 @@ export function normalizeTrackData(t, { bpm = 120 } = {}) {
   };
 }
 
-// Clips are blocks of musical time on a track; `events` (PPQ ticks) are the
-// clip's note store and are preserved through serialization.
+// Clips are windows over their event source: `events` (PPQ ticks) are the
+// clip's note store, `offset` opens the audible window at [offset,
+// offset + length). Both are preserved through serialization.
 export function normalizeClip(c) {
   const base = defaultClip();
   const src = c && typeof c === 'object' ? c : {};
@@ -188,6 +189,7 @@ export function normalizeClip(c) {
     color: typeof src.color === 'string' ? src.color : null,
     start: typeof src.start === 'number' && src.start >= 0 ? src.start : base.start,
     length: typeof src.length === 'number' && src.length > 0 ? src.length : base.length,
+    offset: typeof src.offset === 'number' && src.offset >= 0 ? src.offset : 0,
     events: Array.isArray(src.events) ? src.events.slice() : [],
     audio: normalizeAudioRef(src.audio),
   };

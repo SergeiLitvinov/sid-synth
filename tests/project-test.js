@@ -417,6 +417,16 @@ check('normalizeClip keeps valid clip audio refs', () => {
   return !!audio && audio.hash === 'h1' && audio.offset === 0.5 && audio.gain === 0.7
     && audio.fadeIn === 0.1 && audio.fadeOut === 0.2;
 });
+check('normalizeClip keeps source offset, defaults to zero', () => {
+  const mk = (clip) => parseProject({
+    schemaVersion: 1, name: 'x', tempo: 120,
+    rack: { components: [], connections: [] },
+    tracks: [{ id: 'trk_1', clips: [clip] }],
+  }).tracks[0].clips[0].offset;
+  return mk({ id: 'c1', start: 960, length: 960, offset: 480, events: [] }) === 480
+    && mk({ id: 'c2', start: 0, length: 960, events: [] }) === 0
+    && mk({ id: 'c3', start: 0, length: 960, offset: -5, events: [] }) === 0;
+});
 check('normalizeClip drops invalid clip audio to null', () => {
   const mk = (audio) => parseProject({
     schemaVersion: 1, name: 'x', tempo: 120,

@@ -41,17 +41,21 @@ export function pianoSteps(clip, ppq = 480) {
   return { stepTicks, steps };
 }
 
-// Layout each event as a bar on the grid. Bars outside the pitch range are
-// skipped (they stay in clip.events, just not drawn). Each bar is positioned by
-// its step column (start / stepTicks) and pitch row (high - midi). `event`
+// Layout each event as a bar on the grid. Bars outside the pitch range or
+// outside the clip's [offset, offset + length) window are skipped (they stay
+// in clip.events, just not drawn). Each bar is positioned by its step column
+// ((start - offset) / stepTicks) and pitch row (high - midi). `event`
 // carries a reference to the source event so editors can mutate exactly it.
 export function layoutPianoNotes(events, { clip, ppq = 480, cellW = 18, cellH = 12, low = DEFAULT_LOW_MIDI, high = DEFAULT_HIGH_MIDI } = {}) {
   const { stepTicks, steps } = pianoSteps(clip, ppq);
+  const offset = (clip && clip.offset) || 0;
   const bars = [];
   (events || []).forEach(ev => {
     const midi = noteToMidi(ev.note);
     if (midi === null || midi < low || midi > high) return;
-    const col = Math.floor((ev.start || 0) / stepTicks);
+    const pos = (ev.start || 0) - offset;
+    if (pos < 0 || pos >= (clip.length || 0)) return;
+    const col = Math.floor(pos / stepTicks);
     const span = Math.max(1, Math.ceil((typeof ev.dur === 'number' ? ev.dur : stepTicks) / stepTicks));
     const x = col * cellW;
     const y = (high - midi) * cellH;
@@ -65,12 +69,16 @@ export function layoutPianoNotes(events, { clip, ppq = 480, cellW = 18, cellH = 
 // pitch grid. Unlike layoutPianoNotes this keeps EVERY event (out-of-range
 // pitches still have a column): `x`/`width` follow the step grid, `height` is
 // velocity/127 of the lane height (clamped 1..127, default 100), bottom-aligned.
+// Events outside the clip window collapse to zero width.
 export function layoutVelocityBars(events, { clip, ppq = 480, cellW = 18, laneH = 40 } = {}) {
   const { stepTicks, steps } = pianoSteps(clip, ppq);
+  const offset = (clip && clip.offset) || 0;
+  const length = (clip && clip.length) || 0;
   return (events || []).map(ev => {
-    const col = Math.floor((ev.start || 0) / stepTicks);
+    const pos = (ev.start || 0) - offset;
+    const col = Math.floor(pos / stepTicks);
     const span = Math.max(1, Math.ceil((typeof ev.dur === 'number' ? ev.dur : stepTicks) / stepTicks));
-    const width = Math.max(0, Math.min(span, steps - col)) * cellW;
+    const width = (pos < 0 || pos >= length) ? 0 : Math.max(0, Math.min(span, steps - col)) * cellW;
     const velocity = Math.max(1, Math.min(127, typeof ev.velocity === 'number' ? ev.velocity : 100));
     return { event: ev, col, span, velocity, x: col * cellW, width, height: Math.max(1, Math.round((velocity / 127) * laneH)), laneH };
   });

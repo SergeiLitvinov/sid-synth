@@ -55,6 +55,18 @@ check('step undo/redo restores complete events rather than quantized projection'
   const restored = engine.byId.a.clips[0].events.length === 3;
   engine.dispose(); return ok && edited && restored;
 });
+check('step edits on offset clips land in source ticks', () => {
+  const { engine } = setup();
+  const c = engine.addClip('a', { start: 1920, length: 1920, offset: 960, events: [] });
+  engine.selectStepClip('a', c.id);
+  engine.toggleGridStep('a', 2, 'D4');
+  const evs = engine.byId.a.clips.find(x => x.id === c.id).events;
+  const grid = engine.getStepGrid('a');
+  const okNew = evs.length === 1 && evs[0].note === 'D4' && evs[0].start === 960 + 240;
+  engine.toggleGridStep('a', 2);
+  const okDel = engine.byId.a.clips.find(x => x.id === c.id).events.length === 0;
+  engine.dispose(); return okNew && okDel && grid[2] && grid[2].note === 'D4';
+});
 check('getTracks does not rewrite events', () => {
   const { engine } = setup(); const c = engine.addClip('a', { events: notes() });
   engine.getTracks(); engine.getTracks();

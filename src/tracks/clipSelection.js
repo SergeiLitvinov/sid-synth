@@ -22,7 +22,7 @@ export function createClipSelection({ getTrack, ppq, onChange }) {
     },
     getGrid(trackId) {
       const clip = getClip(trackId);
-      if (clip) return clipEventsToGrid(clip.events || [], { ppq });
+      if (clip) return clipEventsToGrid(clip.events || [], { ppq, offset: clip.offset || 0 });
       return Array(16).fill(null);
     },
     forget(trackId) { selected.delete(trackId); },

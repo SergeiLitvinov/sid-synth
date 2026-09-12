@@ -73,19 +73,24 @@ export function layoutClips(track, { pxPerQuarter = 48, ppq = 480, originTicks =
 
 // Clip note geometry: each event becomes a mini-note inside the clip, with
 // x/width relative to the clip's own top-left (so the caller can absolutely
-// position them inside the clip block). Events outside the clip span are kept
+// position them inside the clip block). Positions are windowed by the clip
+// offset: notes starting left of [offset, offset + length) are skipped,
+// durations clamp at the right edge. Events outside the clip span are kept
 // but clamp to the clip bounds in px space. Returns { note, x, width }.
 export function layoutClipNotes(clip, { pxPerQuarter = 48, ppq = 480, originTicks = 0 } = {}) {
   const clipX = ticksToX(clip.start, { pxPerQuarter, ppq, originTicks });
+  const offset = clip.offset || 0;
   return (clip.events || []).map(ev => {
-    const x = ticksToX(clip.start + ev.start, { pxPerQuarter, ppq, originTicks }) - clipX;
-    const width = ticksToX(clip.start + ev.start + (ev.dur || ppq / 4), { pxPerQuarter, ppq, originTicks }) - clipX - x;
+    const pos = (ev.start || 0) - offset;
+    if (pos < 0 || pos >= clip.length) return null;
+    const x = ticksToX(clip.start + pos, { pxPerQuarter, ppq, originTicks }) - clipX;
+    const width = ticksToX(clip.start + pos + Math.min(ev.dur || ppq / 4, clip.length - pos), { pxPerQuarter, ppq, originTicks }) - clipX - x;
     return {
       note: ev.note,
       x: Math.max(0, x),
       width: Math.max(1, width),
     };
-  });
+  }).filter(Boolean);
 }
 
 // Track pattern geometry: the 16-step grid rendered as blocks on the timeline.

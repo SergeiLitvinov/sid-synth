@@ -15,10 +15,9 @@ export function emptyGrid() {
 // Default length of one clip in ticks (one 4/4 bar at PPQ 480).
 export const DEFAULT_CLIP_LENGTH_TICKS = 1920;
 
-// Plain-data MIDI clip: a block of musical time on a track. `start`/`length`
-// are in PPQ ticks so clips line up with the transport timeline. `events`
-// (notes, PPQ ticks) are the clip's note store: the loop clip (start 0)
-// mirrors the track's grid/rt notes, kept in sync by trackEngine.
+// Plain-data MIDI clip: `events` are note data in clip-local source ticks;
+// `offset` opens a window over them — the clip sounds [offset, offset +
+// length) and trim/split move bounds + offset instead of rewriting events.
 export function defaultClip(cfg = {}) {
   return {
     id: cfg.id || 'clip_' + Math.random().toString(36).slice(2, 8),
@@ -26,6 +25,7 @@ export function defaultClip(cfg = {}) {
     color: cfg.color || null,
     start: cfg.start === undefined ? 0 : cfg.start,
     length: cfg.length === undefined ? DEFAULT_CLIP_LENGTH_TICKS : cfg.length,
+    offset: typeof cfg.offset === 'number' && cfg.offset >= 0 ? cfg.offset : 0,
     events: Array.isArray(cfg.events) ? cfg.events.map(ev => ({ ...ev })) : [],
     audio: cfg.audio && typeof cfg.audio === 'object' ? { ...cfg.audio } : null,
   };

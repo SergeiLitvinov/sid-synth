@@ -478,7 +478,7 @@ export function createArranger({ container, engine, transport, history, markers,
 
   function onEdgeDrop(e) {
     if (!resize) return;
-    const { trackId, clipId, startTicks, endTicks } = resize;
+    const { trackId, clipId, startTicks, endTicks, edge } = resize;
     const preview = resize.preview || { startTicks, endTicks };
     resize = null;
     const edgeEl = e.target;
@@ -495,6 +495,13 @@ export function createArranger({ container, engine, transport, history, markers,
       const patch = {};
       if (newStart !== startTicks) patch.start = newStart;
       if (newLength !== (endTicks - startTicks)) patch.length = newLength;
+      if (edge === 'left' && newStart !== startTicks) {
+        // Nondestructive trim: pin the content by advancing the source
+        // offset with the left edge instead of rewriting events.
+        const t = engine.byId[trackId];
+        const clip = t && (t.clips || []).find(c => c.id === clipId);
+        patch.offset = Math.max(0, (clip && clip.offset ? clip.offset : 0) + (newStart - startTicks));
+      }
       if (history && history.execute) {
         history.execute(moveClipCommand(engine, trackId, clipId, patch));
       } else {

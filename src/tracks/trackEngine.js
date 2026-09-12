@@ -19,6 +19,10 @@ function defaultClip(cfg = {}) {
     color: cfg.color || null,
     start: cfg.start === undefined ? 0 : cfg.start,
     length: cfg.length === undefined ? 1920 : cfg.length,
+    // Source offset (ticks): the clip windows its events to
+    // [offset, offset + length). Trim/split adjust bounds + offset and
+    // never rewrite events; notes starting left of the window stay silent.
+    offset: typeof cfg.offset === 'number' && cfg.offset >= 0 ? cfg.offset : 0,
     events: Array.isArray(cfg.events) ? cfg.events.map(ev => ({ ...ev })) : [],
     // Audio reference (M4): { hash, offset, gain, fadeIn, fadeOut } or null.
     // A clip with audio plays the asset at clip.start; MIDI events and audio
@@ -281,12 +285,16 @@ export function createTrackEngine(ctx, dest, config = {}) {
   };
 
   // Reposition/resize a clip on the timeline (start/length in PPQ ticks).
+  // `offset` is only honored when explicitly patched (trim gestures pass it
+  // to keep content pinned while the left edge moves; plain moves and undo
+  // leave it untouched unless included).
   engine.moveClip = (id, clipId, patch = {}) => {
     const t = engine.byId[id];
     const clip = t && t.clips.find(c => c.id === clipId);
     if (!clip) return false;
     if (typeof patch.start === 'number') clip.start = Math.max(0, Math.round(patch.start));
     if (typeof patch.length === 'number') clip.length = Math.max(1, Math.round(patch.length));
+    if (typeof patch.offset === 'number') clip.offset = Math.max(0, Math.round(patch.offset));
     _emitState();
     return true;
   };
@@ -314,10 +322,12 @@ export function createTrackEngine(ctx, dest, config = {}) {
     return true;
   };
 
-  // Split a clip at an absolute timeline tick `atTicks` (must be strictly inside
-  // the clip). The clip becomes two clips: the original keeps [start, atTicks),
-  // a new clip covers [atTicks, start+length). Events are partitioned by their
-  // start tick; events on the right keep their offset from the split point.
+  // Split a clip at an absolute timeline tick `atTicks` (must be strictly
+  // inside). Nondestructive: both halves keep the full event list — the left
+  // half shortens its window, the right half advances its offset past the
+  // cut. Playback windows events by [offset, offset + length), so a note
+  // crossing the cut sounds truncated in the left half and stays silent in
+  // the right (explicit cut policy: notes never span clips).
   // Returns the new (right) clip, or null when the split point is outside.
   engine.splitClip = (id, clipId, atTicks) => {
     const t = engine.byId[id];
@@ -326,22 +336,17 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const cut = Math.max(clip.start, Math.min(Math.round(atTicks), clip.start + clip.length));
     if (cut <= clip.start || cut >= clip.start + clip.length) return null;
     const splitOffset = cut - clip.start;
-    const leftEvents = [];
-    const rightEvents = [];
-    (clip.events || []).forEach(ev => {
-      if (ev.start < splitOffset) leftEvents.push({ ...ev });
-      else rightEvents.push({ ...ev, start: ev.start - splitOffset });
-    });
+    const baseOffset = clip.offset || 0;
     const right = defaultClip({
       name: clip.name,
       color: clip.color,
       start: cut,
       length: clip.start + clip.length - cut,
-      events: rightEvents,
+      offset: baseOffset + splitOffset,
+      events: (clip.events || []).map(ev => ({ ...ev })),
       audio: clip.audio ? { ...clip.audio, offset: (clip.audio.offset || 0) + splitOffset / ticksPerSecond(engine.bpm, engine.ppq) } : null,
     });
     clip.length = splitOffset;
-    clip.events = leftEvents;
     t.clips.push(right);
     _emitState();
     return right;
@@ -451,7 +456,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     const was = !!engine.getStepGrid(id)[step];
     engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, {
       note: note || t.gridNote, dur: dur || t.gridDur,
-    }, { ppq: engine.ppq, remove: was }));
+    }, { ppq: engine.ppq, offset: clip.offset || 0, remove: was }));
     return was ? false : engine.getStepGrid(id)[step];
   };
 
@@ -463,7 +468,7 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (!clip) clip = engine.addClip(id, { start: 0 });
     if (!clip) return null;
     const values = engine.getStepGrid(id)[step] ? patch : { note: t.gridNote, dur: t.gridDur, ...patch };
-    engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, values, { ppq: engine.ppq }));
+    engine.setClipEvents(id, clip.id, editStepEvent(clip.events, step, values, { ppq: engine.ppq, offset: clip.offset || 0 }));
     return engine.getStepGrid(id)[step];
   };
 
@@ -512,9 +517,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
       const stepClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
       (t.clips || []).forEach(clip => {
         if (clip === loopClip || clip === stepClip) return;
+        const offset = clip.offset || 0;
         (clip.events || []).forEach(ev => {
-          const evStart = typeof ev.start === 'number' ? ev.start : 0;
+          const evStart = (typeof ev.start === 'number' ? ev.start : 0) - offset;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+          if (evStart < 0 || evStart >= clip.length) return;
           if (evDur > 0 && clip.start + evStart + evDur <= absTick) ev._scheduledLin = true;
         });
       });
@@ -543,11 +550,13 @@ export function createTrackEngine(ctx, dest, config = {}) {
       const loopClip = engine.playbackMode === 'pattern' ? engine.getStepClip(t.id) : null;
       if (loopClip) {
         const loopPosTicks = absTick % loopLenTicks;
+        const offset = loopClip.offset || 0;
         (loopClip.events || []).forEach(ev => {
-          const evStart = typeof ev.start === 'number' ? ev.start : 0;
+          const evStart = (typeof ev.start === 'number' ? ev.start : 0) - offset;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
-          if (evStart <= loopPosTicks && evStart + evDur > loopPosTicks) {
-            const remainingTicks = (evStart + evDur) - loopPosTicks;
+          if (evStart < 0 || evStart >= loopClip.length) return;
+          if (evStart <= loopPosTicks && evStart + Math.min(evDur, loopClip.length - evStart) > loopPosTicks) {
+            const remainingTicks = evStart + Math.min(evDur, loopClip.length - evStart) - loopPosTicks;
             const durSec = remainingTicks / tps;
             t.voice.noteOn(ev.note, nowAbs, durSec, ev.velocity);
           }
@@ -559,9 +568,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
       (t.clips || []).forEach(clip => {
         if (clip === loopClip) return;
         if (engine.playbackMode === 'pattern' && clip.start === 0) return;
+        const offset = clip.offset || 0;
         (clip.events || []).forEach(ev => {
-          const evStart = typeof ev.start === 'number' ? ev.start : 0;
+          const evStart = (typeof ev.start === 'number' ? ev.start : 0) - offset;
           const evDur = typeof ev.dur === 'number' ? ev.dur : 0;
+          if (evStart < 0 || evStart >= clip.length) return;
           const absStart = clip.start + evStart;
           const absEnd = Math.min(absStart + evDur, clip.start + clip.length);
           if (absStart <= absTick && absEnd > absTick) {
@@ -834,10 +845,14 @@ export function createTrackEngine(ctx, dest, config = {}) {
         if (!stepClip) return;
         const step = engine.ppq / 4;
         const tps = ticksPerSecond(engine.bpm, engine.ppq);
+        const offset = stepClip.offset || 0;
         stepClip.events.forEach(ev => {
-          if (ev.start >= engine._cursor * step && ev.start < (engine._cursor + 1) * step && ev.start < stepClip.length) {
-            const duration = Math.min(ev.dur, stepClip.length - ev.start) / tps;
-            if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + ev.start / tps, duration, ev.velocity);
+          // Windowed position: events sound only inside [offset, offset+length).
+          const pos = (typeof ev.start === 'number' ? ev.start : 0) - offset;
+          if (pos < 0 || pos >= stepClip.length) return;
+          if (pos >= engine._cursor * step && pos < (engine._cursor + 1) * step) {
+            const duration = Math.min(ev.dur, stepClip.length - pos) / tps;
+            if (duration > 0) scheduleNoteOn(t, ev.note, gridLoopAbs + pos / tps, duration, ev.velocity);
           }
         });
       });
@@ -853,10 +868,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
     // --- arranged clips (backlog #24): linear full-song playback ---------
     // Every clip except the loop mirror and the selected step clip (both
     // played by the step loop in pattern mode) sounds its events once,
-    // positioned at clip.start + ev.start ticks (constant tempo). Events are
-    // only scheduled once per play via the per-event _scheduledLin flag;
-    // late passes (timer jitter) catch up by scheduling into the past,
-    // which the Web Audio clock plays immediately.
+    // positioned at clip.start + (ev.start - offset) ticks (constant
+    // tempo); events outside the [offset, offset + length) window never
+    // sound. Events are only scheduled once per play via the per-event
+    // _scheduledLin flag; late passes (timer jitter) catch up by scheduling
+    // into the past, which the Web Audio clock plays immediately.
     const tps = ticksPerSecond(engine.bpm, engine.ppq);
     engine.tracks.forEach(t => {
       const loopClip = engine.playbackMode === 'pattern' ? (t.clips || []).find(c => c.start === 0) : null;
@@ -865,12 +881,18 @@ export function createTrackEngine(ctx, dest, config = {}) {
         if (clip === loopClip || clip === stepClip) return;
         (clip.events || []).forEach(ev => {
           if (ev._scheduledLin) return;
-          const absTicks = clip.start + (typeof ev.start === 'number' ? ev.start : 0);
+          const offset = clip.offset || 0;
+          const relStart = (typeof ev.start === 'number' ? ev.start : 0) - offset;
+          if (relStart < 0 || relStart >= clip.length) {
+            ev._scheduledLin = true;
+            return;
+          }
+          const absTicks = clip.start + relStart;
           const absSec = absTicks / tps;
           if (absSec > elapsed + 0.12) return;
           const timeAbs = engine._playStartCtx + absSec;
-          const durTicks = Math.min(typeof ev.dur === 'number' ? ev.dur : 0, clip.length - ev.start);
-          if (ev.start >= clip.length || (engine.playbackMode === 'song' && (durTicks <= 0 || absSec + durTicks / tps <= elapsed))) {
+          const durTicks = Math.min(typeof ev.dur === 'number' ? ev.dur : 0, clip.length - relStart);
+          if (engine.playbackMode === 'song' && (durTicks <= 0 || absSec + durTicks / tps <= elapsed)) {
             ev._scheduledLin = true;
             return;
           }

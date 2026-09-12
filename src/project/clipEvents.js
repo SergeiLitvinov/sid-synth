@@ -50,11 +50,16 @@ export function mergeClipEvents(gridEvents, rtEvents) {
 // Clip events (ticks) -> 16-step grid, quantized to the loop's step grid.
 // Only events in the first loop (start < loop length) are kept; the cell
 // holding each event's quantized step is set to { note, dur, vel }.
-export function clipEventsToGrid(events, { ppq = DEFAULT_PPQ, steps = 16 } = {}) {
+// Columns address the clip window: pass the clip offset so split/trimmed
+// clips project their sounding region.
+export function clipEventsToGrid(events, { ppq = DEFAULT_PPQ, steps = 16, offset = 0 } = {}) {
   const st = stepTicks(ppq);
+  const off = typeof offset === 'number' && offset >= 0 ? offset : 0;
   const grid = Array(steps).fill(null);
   (events || []).forEach(ev => {
-    const step = Math.floor(ev.start / st);
+    const pos = (typeof ev.start === 'number' ? ev.start : 0) - off;
+    if (pos < 0) return;
+    const step = Math.floor(pos / st);
     if (step < 0 || step >= steps) return;
     const durSteps = Math.max(1, Math.round((typeof ev.dur === 'number' ? ev.dur : st) / st));
     const cell = { note: ev.note, dur: durSteps };

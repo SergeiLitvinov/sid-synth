@@ -367,6 +367,7 @@ function dragEngine(tracks) {
       if (!c) return false;
       if (typeof patch.start === 'number') c.start = patch.start;
       if (typeof patch.length === 'number') c.length = patch.length;
+      if (typeof patch.offset === 'number') c.offset = patch.offset;
       return true;
     },
     removeClip(id, clipId) {
@@ -532,7 +533,7 @@ check('right edge trim extends the clip length (snapped)', () => {
   return lenAfter === 3840 && lenUndo === 1920;
 });
 
-check('left edge trim moves the clip start and shrinks length', () => {
+check('left edge trim moves the clip start and advances offset', () => {
   const { container, engine, history } = trimSetup();
   const edgeL = container.querySelector('.arranger-clip-edge-l');
   // grab at x=0, drag to x=192 -> start moves one bar, but length clamps to the
@@ -542,10 +543,13 @@ check('left edge trim moves the clip start and shrinks length', () => {
   edgeL.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1, clientX: 192, pointerType: 'mouse' }));
   const startAfter = engine.byId.trk_a.clips[0].start;
   const lenAfter = engine.byId.trk_a.clips[0].length;
+  const offAfter = engine.byId.trk_a.clips[0].offset;
   history.undo();
   const startUndo = engine.byId.trk_a.clips[0].start;
   const lenUndo = engine.byId.trk_a.clips[0].length;
-  return startAfter === 1800 && lenAfter === 120 && startUndo === 0 && lenUndo === 1920;
+  const offUndo = engine.byId.trk_a.clips[0].offset;
+  return startAfter === 1800 && lenAfter === 120 && offAfter === 1800
+    && startUndo === 0 && lenUndo === 1920 && offUndo === 0;
 });
 
 check('a click on the edge without movement does not change the clip', () => {
@@ -1275,10 +1279,10 @@ check('layoutClipNotes: event positions are relative to clip start', () => {
   return near(notes[0].x, 24) && near(notes[0].width, 12);
 });
 
-check('layoutClipNotes: negative offsets clamp to clip left edge', () => {
-  const clip = { id: 'c1', start: 0, length: 1920, events: [{ note: 'C4', start: -120, dur: 120 }] };
+check('layoutClipNotes: events left of the offset window are silent (skipped)', () => {
+  const clip = { id: 'c1', start: 0, length: 1920, offset: 0, events: [{ note: 'C4', start: -120, dur: 120 }] };
   const notes = layoutClipNotes(clip, { pxPerQuarter: 48, ppq: 480 });
-  return notes.length === 1 && notes[0].x === 0;
+  return notes.length === 0;
 });
 
 // ---- arranger DOM (faux engine/transport, real DOM) ------------------------
@@ -1519,6 +1523,18 @@ check('layoutPianoNotes positions bars by pitch row and step column', () => {
     && bars[0].x === 0 && bars[0].y === (71 - 60) * 12 && bars[0].width === 18
     && bars[1].x === 18 && bars[1].width === 36;
 });
+check('layoutPianoNotes windows bars by clip offset', () => {
+  const bars = layoutPianoNotes(
+    [
+      { note: 'C4', start: 0, dur: 120 }, // left of the window -> silent
+      { note: 'D4', start: 480, dur: 120 }, // at window start -> column 0
+      { note: 'E4', start: 600, dur: 120 },
+    ],
+    { clip: { length: 1440, offset: 480 }, cellW: 18, cellH: 12 },
+  );
+  return bars.length === 2 && bars[0].note === 'D4' && bars[0].x === 0
+    && bars[1].note === 'E4' && bars[1].x === 18;
+});
 
 // ---- piano roll quantize helper (backlog #33) ------------------------------
 check('quantizeStart snaps a start to the 1/16 grid', () => {
@@ -1718,6 +1734,32 @@ check('clicking an empty piano roll cell adds a note (undoable)', () => {
   history.undo();
   const afterUndo = engine.byId.trk_a.clips[0].events.length;
   return !!added && added.start === 360 && added.dur === 120 && added.velocity === 100 && afterUndo === 0;
+});
+check('drawing on an offset clip lands in source ticks', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, offset: 960, events: [] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const body = container.querySelector('.pr-body');
+  // Same column 3 / A3 cell as the plain draw test: source start = 960 + 360.
+  body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 88, clientY: 14 * 12 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 88, clientY: 14 * 12 }));
+  const added = engine.byId.trk_a.clips[0].events.find(e => e.note === 'A3');
+  return !!added && added.start === 1320;
+});
+check('drum toggle on an offset clip lands in source ticks', () => {
+  const container = document.createElement('div');
+  const engine = prEngine([{ id: 'c1', name: 'Clip 1', start: 1920, length: 1920, offset: 480, events: [] }]);
+  const history = createHistory();
+  const pr = createPianoRoll({ container, engine, transport: fauxTransport(), history });
+  pr.setSelection({ trackId: 'trk_a', clipId: 'c1' });
+  const drumBtn = [...container.querySelectorAll('button')].find(b => b.textContent === 'DRUM');
+  drumBtn.click();
+  const cell = container.querySelector('.drum-cell');
+  cell.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  const added = engine.byId.trk_a.clips[0].events.find(e => e.note === 'C3');
+  return !!added && added.start === 480;
 });
 
 check('clicking an existing piano roll note removes it (undoable)', () => {

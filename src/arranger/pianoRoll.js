@@ -329,11 +329,12 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
       : commitCtx.events;
     if (!targets.length) return;
     commitCtx.commitEvents(events => {
+      const off = (commitCtx && commitCtx.offset) || 0;
       targets.forEach(ev => {
         const i = events.indexOf(ev);
         if (i < 0) return;
         const cur = events[i];
-        const start = quantizeStart(cur.start || 0, { ppq, grid, strength, swing });
+        const start = quantizeStart((cur.start || 0) - off, { ppq, grid, strength, swing }) + off;
         if (start !== (cur.start || 0)) events[i] = { ...cur, start };
       });
       events.sort((a, b) => (a.start || 0) - (b.start || 0));
@@ -450,8 +451,10 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   function previewTransformed(transformed) {
     if (!sel || !engine.auditionNote || !transformed || !transformed.length) return;
     const ppq = transport.ppq || 480;
-    // Audition the same full-resolution phrase that apply will commit.
-    previewEvents(transformed, {
+    const off = (commitCtx && commitCtx.offset) || 0;
+    // Audition the same full-resolution phrase that apply will commit,
+    // shifted to sounding positions like playback does.
+    previewEvents(transformed.map(ev => ({ ...ev, start: (ev.start || 0) - off })), {
       bpm: engine.bpm || 120,
       ppq,
       now: (engine.ctx && engine.ctx.currentTime) || 0,
@@ -466,7 +469,8 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
     const grid = snapDiv > 0 ? snapDiv : 1;
     const ppqLocal = transport.ppq || 480;
     previewTransformed(mergedTargets(events => events.map(ev => {
-      const start = quantizeStart(ev.start || 0, { ppq: ppqLocal, grid, strength, swing });
+      const off = (commitCtx && commitCtx.offset) || 0;
+      const start = quantizeStart((ev.start || 0) - off, { ppq: ppqLocal, grid, strength, swing }) + off;
       return start !== (ev.start || 0) ? { ...ev, start } : ev;
     })));
   }
@@ -536,6 +540,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
       clip,
       ppq,
       sixteenth,
+      offset: clip.offset || 0,
       steps: Math.max(1, Math.ceil((clip.length || sixteenth) / sixteenth)),
       advance: snapDiv > 0 ? snapDiv : 1,
     };
@@ -546,7 +551,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   function stepInsert(noteName) {
     const g = stepGeom();
     if (!g) return false;
-    const start = stepCol * g.sixteenth;
+    const start = g.offset + stepCol * g.sixteenth;
     const durTicks = g.advance * g.sixteenth;
     const durSec = durTicks / g.ppq * (60 / (engine.bpm || 120));
     commitCtx.commitEvents(events => {
@@ -566,7 +571,8 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
     const start = prev * g.sixteenth;
     commitCtx.commitEvents(events => {
       for (let i = events.length - 1; i >= 0; i--) {
-        if ((events[i].start || 0) >= start && (events[i].start || 0) < start + g.sixteenth) events.splice(i, 1);
+        const pos = (events[i].start || 0) - g.offset;
+        if (pos >= start && pos < start + g.sixteenth) events.splice(i, 1);
       }
     });
     stepCol = prev;
@@ -716,14 +722,16 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
       body.style.width = (pitchW + gridW) + 'px';
       body.style.height = gridH + 'px';
 
-      // Build event lookup: stepIndex -> Set of pitch indices
+      // Build event lookup: stepIndex -> Set of pitch indices (windowed by
+      // the clip offset so split/trimmed clips show their sounding region).
       const events = clip.events || [];
+      const evOffset = clip.offset || 0;
       const stepSet = new Map(); // stepIdx -> Set of pitchIdx
       drumPitches.forEach((_, pi) => {
         for (let si = 0; si < steps; si++) stepSet.set(si + '_' + pi, false);
       });
       events.forEach(ev => {
-        const si = Math.round((ev.start || 0) / stepTicks);
+        const si = Math.round(((ev.start || 0) - evOffset) / stepTicks);
         const pi = drumPitches.indexOf(ev.note);
         if (si >= 0 && si < steps && pi >= 0) stepSet.set(si + '_' + pi, true);
       });
@@ -759,7 +767,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
           cell.title = note + ' step ' + (ci + 1);
           cell.addEventListener('pointerdown', () => {
             const noteName = drumPitches[ri];
-            const start = ci * stepTicks;
+            const start = evOffset + ci * stepTicks;
             drumCommitEvents(evts => {
               const existing = evts.findIndex(e => e.note === noteName && Math.abs((e.start || 0) - start) < 1);
               if (existing >= 0) evts.splice(existing, 1);
@@ -773,7 +781,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
         }
       });
 
-      commitCtx = { commitEvents: drumCommitEvents, events: clip.events || [] };
+      commitCtx = { commitEvents: drumCommitEvents, events: clip.events || [], offset: clip.offset || 0 };
 
       gridWrap.append(stepHead, body);
       return;
@@ -854,7 +862,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
         render();
       }
     }
-    commitCtx = { commitEvents, events: clip.events || [] };
+    commitCtx = { commitEvents, events: clip.events || [], offset: clip.offset || 0 };
 
     // Grid cell from a viewport position (pitch column / row) relative to the body.
     // With snap on, the column is the floored sixteenth; with snap off it stays
@@ -880,12 +888,13 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
       const grab = cellAt(e.clientX, e.clientY);
       const isSelected = selected.has(n.event);
       const group = isSelected ? [...selected] : [n.event];
+      const off = g.offset || 0;
       const snap = group.map(ev => ({
         ev,
         el: noteEls.get(ev),
-        col: Math.floor(ev.start / g.stepTicks),
+        col: Math.floor(((ev.start || 0) - off) / g.stepTicks),
         midi: noteToMidi(ev.note),
-        pCol: Math.floor(ev.start / g.stepTicks),
+        pCol: Math.floor(((ev.start || 0) - off) / g.stepTicks),
         pMidi: noteToMidi(ev.note),
       }));
       // Audition the pressed note; re-audition as the drag changes its pitch.
@@ -926,7 +935,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
             commitEvents(events => {
               snap.forEach(s => {
                 const i = events.indexOf(s.ev);
-                if (i >= 0) events[i] = { ...events[i], note: midiToNote(s.pMidi), start: Math.round(s.pCol * g.stepTicks) };
+                if (i >= 0) events[i] = { ...events[i], note: midiToNote(s.pMidi), start: Math.round(s.pCol * g.stepTicks) + (g.offset || 0) };
               });
             });
           } else {
@@ -949,7 +958,8 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
       e.stopPropagation();
       e.preventDefault();
       const g = body._grid;
-      const origCol = Math.floor(n.start / g.stepTicks);
+      const off = g.offset || 0;
+      const origCol = Math.floor((n.start - off) / g.stepTicks);
       const origSpan = Math.max(1, Math.ceil((typeof n.dur === 'number' ? n.dur : g.stepTicks) / g.stepTicks));
       let preview = null;
       const onMove = (evt) => {
@@ -974,7 +984,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
         if (preview) {
           commitEvents(events => {
             const i = events.indexOf(n.event);
-            if (i >= 0) events[i] = { ...events[i], start: Math.round(preview.startCol * g.stepTicks), dur: Math.round(preview.span * g.stepTicks) };
+            if (i >= 0) events[i] = { ...events[i], start: Math.round(preview.startCol * g.stepTicks) + (g.offset || 0), dur: Math.round(preview.span * g.stepTicks) };
           });
         } else {
           render();
@@ -1041,7 +1051,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
           // off the column may be fractional, so the start is rounded to ticks.
           const qCol = Math.max(0, Math.min(g.steps - 1, snapCol(start.col)));
           commitEvents(events => {
-            events.push({ note: noteName, start: Math.round(qCol * g.stepTicks), dur: g.stepTicks, velocity: 100 });
+            events.push({ note: noteName, start: Math.round(qCol * g.stepTicks) + (g.offset || 0), dur: g.stepTicks, velocity: 100 });
           });
           // Audition the drawn note for its step duration (self-terminating).
           const ppq = transport.ppq || 480;
@@ -1107,6 +1117,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
     body._grid = {
       trackId: sel.trackId,
       clip,
+      offset: clip.offset || 0,
       pitchW: PITCH_W,
       cellW,
       cellH,

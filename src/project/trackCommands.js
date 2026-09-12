@@ -273,7 +273,8 @@ export function removeClipCommand(engine, id, clipId) {
   };
 }
 
-// Move/resize a clip. Captures the pre-edit start/length so undo restores them.
+// Move/resize a clip. Captures the pre-edit start/length/offset so undo
+// restores them (offset only changes on trim gestures that pass it).
 export function moveClipCommand(engine, id, clipId, patch) {
   let before = null;
   return {
@@ -282,7 +283,7 @@ export function moveClipCommand(engine, id, clipId, patch) {
       const t = engine.byId[id];
       const clip = t && t.clips.find(c => c.id === clipId);
       if (!clip) return;
-      before = { start: clip.start, length: clip.length };
+      before = { start: clip.start, length: clip.length, offset: clip.offset || 0 };
       engine.moveClip(id, clipId, patch);
     },
     undo() {

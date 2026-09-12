@@ -395,7 +395,7 @@ check('addClip without a start defaults to the loop position', () => {
   return clip.start === 0;
 });
 
-check('splitClip splits a clip in two and partitions events', () => {
+check('splitClip windows events without rewriting them', () => {
   const d = makeFixture(120);
   d.engine.addClip('trk_a', { start: 0 }); // loop clip first, so sync targets it
   d.engine.addClip('trk_a', { id: 'clip_s', start: 1920, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }, { note: 'G4', start: 1200, dur: 120 }] });
@@ -404,8 +404,9 @@ check('splitClip splits a clip in two and partitions events', () => {
   const left = clips.find(c => c.id === 'clip_s');
   return right !== null
     && clips.length === 3
-    && left.length === 960 && left.events.length === 1 && left.events[0].start === 0
-    && right.start === 2880 && right.length === 960 && right.events.length === 1 && right.events[0].start === 240;
+    && left.length === 960 && left.events.length === 2
+    && right.start === 2880 && right.length === 960 && right.offset === 960
+    && right.events.length === 2 && right.events[1].start === 1200;
 });
 
 check('splitClip outside the clip bounds returns null', () => {
@@ -1404,6 +1405,62 @@ check('chase follows the selected clip, silent start-0 stays silent', () => {
   if (d.spy.length !== 1 || d.spy[0].note !== 'E4') return false;
   d.engine.chaseToTick(2000); // loop-relative 80, still inside selected E4
   return d.spy.length === 2 && d.spy.every(s => s.note === 'E4');
+});
+
+// --- clip source offset (P0: nondestructive trim/split) --------------------
+check('splitClip windows without rewriting events', () => {
+  const d = makeFixture(120);
+  const c = d.engine.addClip('trk_a', { start: 0, length: 1920, events: [{ note: 'C4', start: 0, dur: 120 }, { note: 'G4', start: 1200, dur: 120 }] });
+  const right = d.engine.splitClip('trk_a', c.id, 960);
+  const left = d.engine.byId.trk_a.clips.find(x => x.id === c.id);
+  return right.start === 960 && right.length === 960 && right.offset === 960
+    && left.length === 960 && (left.offset || 0) === 0
+    && left.events.length === 2 && right.events.length === 2
+    && right.events[1].start === 1200;
+});
+check('moveClip honors an explicit offset patch', () => {
+  const d = makeFixture(120);
+  const c = d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  d.engine.moveClip('trk_a', c.id, { start: 480, length: 1440, offset: 480 });
+  const after = d.engine.byId.trk_a.clips.find(x => x.id === c.id);
+  return after.start === 480 && after.length === 1440 && after.offset === 480;
+});
+check('step scheduler plays offset clips shifted, skips leftovers', () => {
+  const d = makeFixture(120);
+  // C4 at source 0 (left of the window) stays silent; D4 at source 480
+  // sounds at loop position 0 after a 480-tick left trim.
+  d.engine.addClip('trk_a', { start: 0, length: 1440, offset: 480, events: [
+    { note: 'C4', start: 0, dur: 120 },
+    { note: 'D4', start: 480, dur: 120 },
+  ]});
+  d.play();
+  for (let i = 0; i < 5; i++) d.advanceAndTick(100);
+  const d4 = d.spy.filter(s => s.note === 'D4');
+  const c4 = d.spy.filter(s => s.note === 'C4');
+  return d4.length === 1 && Math.abs(d4[0].at - 0.03) < 1e-6 && c4.length === 0;
+});
+check('linear scheduler clamps offset clips at the right edge', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 0, length: 1920 });
+  // E4 spans 1800..2040 in a [960, 1920) window: only 120 ticks sound.
+  d.engine.addClip('trk_a', { start: 1920, length: 960, offset: 960, events: [
+    { note: 'E4', start: 1800, dur: 240 },
+  ]});
+  d.play();
+  d.set(3800); d.engine._tick();
+  const hit = d.spy.find(s => s.note === 'E4');
+  // Absolute position = 1920 + (1800 - 960) = 2760 ticks = 2.875s.
+  return !!hit && Math.abs(hit.at - 2.905) < 1e-6 && Math.abs(hit.dur - 0.125) < 1e-6;
+});
+check('chase restarts offset clips at the windowed remainder', () => {
+  const d = makeFixture(120);
+  d.engine.addClip('trk_a', { start: 1920, length: 960, offset: 960, events: [
+    { note: 'E4', start: 1800, dur: 480 },
+  ]});
+  d.play();
+  d.spy.length = 0;
+  d.engine.chaseToTick(2800); // inside the windowed note (2760..2880)
+  return d.spy.length === 1 && d.spy[0].note === 'E4' && Math.abs(d.spy[0].dur - 80 / 960) < 1e-6;
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
