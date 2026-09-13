@@ -1,6 +1,6 @@
 # Project validation and replacement
 
-Implementation: 2026-09-13, based on main `132f559` (portable bundle and revision autosave).
+Implementation: 2026-09-13, rebased onto main `8c4bcbd` (PR #1 validation and unified transport/metronome). Extends that validation with strict parsing and staged runtime replacement.
 
 ## Input policy
 
@@ -30,7 +30,7 @@ Run the reproducible DOM-free model checks with Node (tested on Node 24):
 node tests/run-model-tests.mjs
 ```
 
-375/375 pass: project 95, projectStore 22, projectSession 11, audit 16, track 161, song 21, history 28, clipEvents 21.
+411/411 pass: project 95, project-validation 36, projectStore 22, projectSession 11, audit 16, track 161, song 21, history 28, clipEvents 21.
 
 `rackProject-test` additionally passes 5/5 with a temporary minimal DOM harness and the existing mock AudioContext: detached preparation, pitch preservation, master disconnect, failed constructor cleanup and LFO waveform restoration. This is not a real browser test.
 
@@ -40,4 +40,4 @@ Browser suite entry points are `tests/projectSession-test.html` and `tests/rackP
 python tests/run-browser-tests.py --browser /path/to/browser
 ```
 
-The full browser/UI/real-Web-Audio run is outstanding. This environment has no browser executable and Chromium installation failed with network timeouts. An exploratory Node run of the unchanged transport browser suite reports 55/56 (the pause/resume test compares an exact wall-clock tick position); it is not included in the DOM-free runner and no transport changes are made here. The TODO remains unchecked until the browser gate passes, including repeated Open/New, failed import while playing, media transfer and audio routing after loading.
+The full browser/UI/real-Web-Audio run is outstanding. The initial Playwright Chromium download timed out. After rebasing, Puppeteer from the new package.json supplied Chrome 148, but launching it failed because the execution sandbox denies its process-singleton socket (Operation not permitted). An exploratory Node run of the unchanged transport browser suite fails the pause/resume exact wall-clock tick-position assertion; it is not included in the DOM-free runner and no transport changes are made here. The TODO remains unchecked until the browser gate passes, including repeated Open/New, failed import while playing, media transfer and audio routing after loading.

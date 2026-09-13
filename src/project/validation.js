@@ -30,7 +30,7 @@ function note(v, p) {
 }
 // Check before normalization: an explicit invalid value must never become a default.
 // Walk even extension data so NaN/Infinity cannot disappear during JSON cloning.
-export function validateInput(p) {
+export function validateInput(p, { references = true } = {}) {
   object(p, 'project');
   const seen = new Set();
   function walk(v, path) {
@@ -139,14 +139,15 @@ export function validateInput(p) {
       });
       if (c.audio !== undefined && c.audio !== null) {
         object(c.audio,cp+'.audio');
-        if (!assets.has(c.audio.hash)) fail(cp+'.audio.hash','missing asset reference');
+        id(c.audio.hash,cp+'.audio.hash');
+        if (references && !assets.has(c.audio.hash)) fail(cp+'.audio.hash','missing asset reference');
         fields(c.audio,cp+'.audio',{offset:[0],gain:[0],fadeIn:[0],fadeOut:[0]});
       }
     });
   });
   if (p.activeTrackId !== undefined && p.activeTrackId !== null && !tracks.has(p.activeTrackId)) fail('activeTrackId','missing track reference');
   const parents = new Map((p.tracks || []).map(t => [t.id,t.folder]));
-  for (const t of p.tracks || []) {
+  for (const t of references ? (p.tracks || []) : []) {
     const visited = new Set([t.id]); let f = t.folder;
     while (f !== undefined && f !== null) {
       if (!tracks.has(f) || visited.has(f)) fail('track.'+t.id+'.folder','missing or cyclic track reference');

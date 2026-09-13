@@ -1,7 +1,7 @@
 // Node runner for DOM-free model suites. The DOM below only collects reports;
 // this does not substitute for the real browser, audio or UI suites.
 import { spawnSync } from 'node:child_process';
-const suites = ['project-test','projectStore-test','projectSession-test','audit-test',
+const suites = ['project-test','project-validation-test','projectStore-test','projectSession-test','audit-test',
   'track-test','song-test','history-test','clipEvents-test'];
 if (!process.argv[2]) {
   let failed = false;
