@@ -30,8 +30,8 @@ export function applyParams(comp, params) {
         if (sel) sel.value = params.wave;
       }
       if (params.freq !== undefined) {
-        comp.frequency = params.freq;
         if (comp.freqKnob) comp.freqKnob.setValue(params.freq);
+        comp.frequency = params.freq;
       }
       if (params.on !== undefined) {
         comp.isOn = params.on;
@@ -79,6 +79,8 @@ export function applyParams(comp, params) {
       break;
     case 'lfo':
       if (params.wave) {
+        comp.waveType = params.wave;
+        if (comp.lfo) comp.lfo.setType(params.wave);
         const sel = comp.element.querySelector('.param-row select');
         if (sel) sel.value = params.wave;
       }

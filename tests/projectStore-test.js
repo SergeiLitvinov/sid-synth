@@ -10,7 +10,7 @@ const pending = [];
 
 function check(name, fn) {
   try {
-    if (fn() === false) throw new Error('assertion returned false');
+    if (!fn()) throw new Error('assertion returned false');
     passed.push(name);
     const li = document.createElement('li');
     li.textContent = `PASS  ${name}`;
@@ -55,13 +55,33 @@ function makeDoc(overrides = {}) {
     id: 'proj_test',
     name: 'Test Project',
     tempo: 130,
-    rackComponents: [{ id: 'osc1', type: 'oscillator', x: 12, y: 34, params: { n: 0, wave: 'saw' } }],
+    rackComponents: [{ id: 'osc1', type: 'oscillator', x: 12, y: 34, params: { n: 1, wave: 'sawtooth' } }],
     rackConnections: [{ from: 'osc1', to: 'master', toChannel: null, outChannel: 0 }],
     tracks: [{ id: 'trk_a', name: 'A', grid: ['C4', null], rt: [], volume: 0.5 }],
     activeTrackId: 'trk_a',
     ...overrides,
   });
 }
+
+check('invalid primary snapshot is blocked and recovery skips invalid backups', () => {
+  const valid = makeDoc(); const invalid = { ...valid, tempo: -1 };
+  const storage = fakeStorage({ [PROJECT_STORAGE_KEY]: JSON.stringify(invalid),
+    [PROJECT_STORAGE_KEY + ':snapshots']: JSON.stringify([{ raw: JSON.stringify(valid) }, { raw: JSON.stringify(invalid) }]) });
+  let applied = false;
+  const store = createProjectStore({ storage, apply: () => { applied = true; } });
+  return store.restore() === null && !applied && store.isBlocked() && store.recoverSnapshot().tempo === 130;
+});
+check('failed apply blocks autosave and does not report a clean restore', () => {
+  const raw = JSON.stringify(makeDoc());
+  const storage = fakeStorage({ [PROJECT_STORAGE_KEY]: raw });
+  const store = createProjectStore({ storage, capture: () => defaultProject(), apply: () => { throw new Error('allocation failed'); } });
+  return store.restore() === null && store.getSaveState().state === 'error' && !store.saveNow() && store.readRaw() === raw;
+});
+check('nonfinite capture cannot overwrite the last saved document', () => {
+  const raw = JSON.stringify(makeDoc()); const storage = fakeStorage({ [PROJECT_STORAGE_KEY]: raw });
+  const store = createProjectStore({ storage, capture: () => ({ ...makeDoc(), tempo: Infinity }) });
+  return !store.saveNow() && store.readRaw() === raw && store.getSaveState().state === 'error';
+});
 
 // ---- save path ------------------------------------------------------------
 check('saveNow writes the captured doc under the unified key', () => {

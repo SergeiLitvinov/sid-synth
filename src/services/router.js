@@ -318,13 +318,13 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
     initPortClicks();
   }
 
-  function clear() {
+  function clear(silent = false) {
     connections.length = 0;
     selectedConnection = null;
     currentConnectionFrom = null;
     if (tempLine) { tempLine.remove(); tempLine = null; }
     drawConnections();
-    emitMutate();
+    if (!silent) emitMutate();
   }
 
   function removeConnectionsOf(id) {
@@ -337,6 +337,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
 
   return {
     connections,
+    setMasterGain: (node) => { masterGain = node; },
     drawConnections,
     deleteConnection,
     addConnection,

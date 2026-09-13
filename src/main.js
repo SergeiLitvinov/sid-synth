@@ -43,7 +43,7 @@ import { createInputUI } from './audio/inputUI.js';
     analyserFreq,
   }).start();
 
-  const { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport, setOnMutate } = createRackController({ ctx, masterGain });
+  const { rack, components, router, createComponent, prepareRack, clearRack, playNote, stopAll, setTransport, setOnMutate } = createRackController({ ctx, masterGain });
 
   // Musical keyboard + MIDI
   let recNoteOn = null, recNoteOff = null;
@@ -206,7 +206,7 @@ import { createInputUI } from './audio/inputUI.js';
   // (projectAssets itself is declared above the arranger wiring.)
 
   const { captureProject, applyProject, getProjectName, setProjectName } = createProjectSession({
-    components, router, createComponent, clearRack, trackEngine, transport,
+    components, router, prepareRack, trackEngine, transport,
     markers, history, recorderUI, arranger,
     getAssets: () => projectAssets,
     setAssets: assets => { projectAssets = assets; },

@@ -1,24 +1,13 @@
-import { SCHEMA_VERSION, defaultProject } from './defaultProject.js';
-import { parseProject, normalizeTrackData } from './serialize.js';
+import { defaultProject } from './defaultProject.js';
+import { parseProject } from './serialize.js';
 
 // --- migration ------------------------------------------------------------
 // Bump a project document to the current schema version. Accepts an object or
 // JSON string; returns a normalized object at SCHEMA_VERSION.
 export function migrateProject(input) {
-  let project = typeof input === 'string' ? parseProject(input) : input;
-  if (!project || typeof project !== 'object' || Array.isArray(project)) {
-    throw new Error('migrate: invalid project');
-  }
-  const v = typeof project.schemaVersion === 'number' ? project.schemaVersion : 0;
-  if (v > SCHEMA_VERSION) {
-    throw new Error('migrate: unsupported schemaVersion ' + v);
-  }
-  if (v < SCHEMA_VERSION) {
-    // v0 → v1: re-run full normalization so defaults/fixed fields are present.
-    project = parseProject(project);
-    project.schemaVersion = SCHEMA_VERSION;
-  }
-  return parseProject(project);
+  // Only the unversioned legacy shape is migrated implicitly. Explicit
+  // invalid/future versions are rejected by the parser before normalization.
+  return parseProject(input);
 }
 
 // --- legacy import --------------------------------------------------------
@@ -28,12 +17,18 @@ export function migrateProject(input) {
 // Missing keys become empty sections, so migration never loses the app.
 export function fromLegacy({ autosave, tracksStore, id, name } = {}) {
   const project = defaultProject({ id, name });
+  for (const [key, value] of Object.entries({ autosave, tracksStore })) {
+    if (value != null && (typeof value !== 'object' || Array.isArray(value))) throw new Error('legacy.' + key + ': expected object');
+  }
   const rack = autosave && typeof autosave === 'object' ? autosave : null;
+  for (const key of ['components', 'connections']) {
+    if (rack && rack[key] !== undefined && !Array.isArray(rack[key])) throw new Error('legacy.rack.' + key + ': expected array');
+  }
   project.rack.components = rack && Array.isArray(rack.components) ? rack.components.map(c => ({
     id: c.id || c.type,
     type: c.type,
-    x: parseInt(c.x, 10) || 0,
-    y: parseInt(c.y, 10) || 0,
+    x: c.x === undefined ? 0 : Number(c.x),
+    y: c.y === undefined ? 0 : Number(c.y),
     params: c.params && typeof c.params === 'object' ? c.params : {},
   })) : [];
   project.rack.connections = rack && Array.isArray(rack.connections)
@@ -46,19 +41,13 @@ export function fromLegacy({ autosave, tracksStore, id, name } = {}) {
     : [];
 
   const store = tracksStore && typeof tracksStore === 'object' ? tracksStore : null;
-  const legacyTempo = store && typeof store.tempo === 'number' ? store.tempo : (store && store.bpm);
-  if (typeof legacyTempo === 'number' && legacyTempo > 0) project.tempo = legacyTempo;
-  if (Array.isArray(store && store.tracks)) {
-    project.tracks = store.tracks.map(t => normalizeLegacyTrack(t, legacyTempo));
+  const legacyTempo = store ? (store.tempo !== undefined ? store.tempo : store.bpm) : undefined;
+  if (legacyTempo !== undefined) project.tempo = legacyTempo;
+  if (store && store.tracks !== undefined) {
+    project.tracks = store.tracks;
   }
   project.activeTrackId = store && store.activeTrackId
     ? store.activeTrackId
     : (project.tracks[0] && project.tracks[0].id) || null;
   return migrateProject(project);
-}
-
-function normalizeLegacyTrack(t, bpm) {
-  // Legacy grid/rt fold into a loop clip inside normalizeTrackData; the
-  // pre-project store tempo keeps rt seconds conversion accurate.
-  return normalizeTrackData(t, { bpm });
 }

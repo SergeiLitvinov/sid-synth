@@ -209,7 +209,9 @@ export function createProjectStore(cfg = {}) {
     try { autosave = JSON.parse(read(autosaveKey)); } catch (e) {}
     try { tracksStore = JSON.parse(read(tracksKey)); } catch (e) {}
     if (autosave === null && tracksStore === null) return null;
-    const project = fromLegacy({ autosave, tracksStore });
+    let project;
+    try { project = fromLegacy({ autosave, tracksStore }); }
+    catch (e) { blocked = true; onError(e); return null; }
     if (write(storageKey, JSON.stringify(project))) {
       remove(autosaveKey);
       remove(tracksKey);
@@ -220,10 +222,19 @@ export function createProjectStore(cfg = {}) {
   function restore() {
     const project = readProject();
     if (project) {
+      try { if (apply) apply(project); }
+      catch (e) {
+        blocked = true;
+        lastError = e;
+        saveState = 'error';
+        logJournal({ result: 'error', detail: 'restore: ' + e.message });
+        onError(e);
+        notify();
+        return null;
+      }
       try { lastSavedRevision = revisionOf(JSON.stringify(project)); }
       catch (e) { lastSavedRevision = null; }
       saveState = 'clean';
-      if (apply) apply(project);
       notify();
     }
     return project;

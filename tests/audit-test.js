@@ -142,7 +142,7 @@ check('undo track removal restores order and velocity', () => {
 check('loading empty project removes default tracks and restores tempo', () => {
   const e = fixture(); const transport = createTransport({ ctx: e.ctx });
   const session = createProjectSession({ components: {}, router: { connections: [], drawConnections() {} },
-    clearRack() {}, createComponent() {}, trackEngine: e, transport, markers: createMarkerStore(),
+    prepareRack() { return { commit() {}, dispose() {} }; }, trackEngine: e, transport, markers: createMarkerStore(),
     history: createHistory(), getAssets: () => [], setAssets() {} });
   session.applyProject(defaultProject({ tracks: [], tempo: 95 }));
   const ok = e.tracks.length === 0 && e.bpm === 95; e.dispose(); return ok;

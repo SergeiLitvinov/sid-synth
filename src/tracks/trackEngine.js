@@ -1,3 +1,4 @@
+import { prepareAudio } from '../audio/prepareAudio.js';
 import { createClipSelection } from './clipSelection.js';
 import { createLiveInput } from './liveInput.js';
 import { editStepEvent } from '../project/stepEditing.js';
@@ -162,6 +163,41 @@ export function createTrackEngine(ctx, dest, config = {}) {
     _applyAudibility();
     _emitState();
     return t;
+  };
+
+  // Allocation happens off the live track list. A failed voice/device build
+  // leaves playback, selection and history untouched.
+  engine.prepareTracks = (configs) => {
+    const tracks = [];
+    const audio = prepareAudio(engine.ctx);
+    let adopted = false;
+    const dispose = () => { if (!adopted) { tracks.forEach(t => { try { t.voice.dispose(); } catch (_) {} }); audio.dispose(); } };
+    try {
+      configs.forEach(cfg => {
+        const t = defaultTrackConfig(cfg);
+        t.voice = new TrackVoices(audio.ctx, t, dest);
+        tracks.push(t);
+      });
+      const anySolo = tracks.some(t => t.solo);
+      tracks.forEach(t => t.voice.setGain(!t.muted && (!anySolo || t.solo) ? t.volume : 0));
+    } catch (e) { dispose(); throw e; }
+    return { dispose, commit(activeTrackId) {
+      engine._recBuffer.clear();
+      engine._takeBefore = null;
+      engine.stop();
+      engine.tracks.forEach(t => {
+        clipSelection.forget(t.id);
+        try { t.voice.dispose(); } catch (_) {}
+      });
+      engine._armed.clear();
+      engine._recBuffer.clear();
+      engine.tracks = tracks;
+      engine.byId = Object.fromEntries(tracks.map(t => [t.id, t]));
+      engine.activeTrackId = activeTrackId;
+      engine._idCount = tracks.reduce((n,t) => Math.max(n, parseInt(t.id.replace(/\D/g,''),10) || 0), engine._idCount);
+      adopted = true;
+      audio.commit();
+    } };
   };
 
   engine.removeTrack = (id) => {
@@ -724,7 +760,11 @@ export function createTrackEngine(ctx, dest, config = {}) {
     if (engine._timer) { clearInterval(engine._timer); engine._timer = null; }
   };
 
+  engine.beginProjectReplacement = () => { engine._replacingProject = true; };
+  engine.endProjectReplacement = () => { engine._replacingProject = false; _emitState(); };
+
   function _emitState() {
+    if (engine._replacingProject) return;
     if (engine.onStateChange) engine.onStateChange(engine.getState());
   }
 

@@ -85,10 +85,12 @@ check('serializeProject strips non-serializable fields from tracks', () => {
 
 check('connections serialize with toChannel/outChannel', () => {
   const st = fixtureState();
-  st.connections.push({ from: 'oscillator_1', to: 'filter_1', toChannel: 2, outChannel: 1 });
+  st.components.splitter_1 = { type: 'splitter', element: { style: {} } };
+  st.components.mixer_1 = { type: 'mixer', element: { style: {} } };
+  st.connections.push({ from: 'splitter_1', to: 'mixer_1', toChannel: 2, outChannel: 1 });
   const p = serializeProject(st);
   const c = p.rack.connections.find(c => c.toChannel === 2);
-  return !!c && c.from === 'oscillator_1' && c.outChannel === 1;
+  return !!c && c.from === 'splitter_1' && c.outChannel === 1;
 });
 
 check('mod connections are marked', () => {
@@ -268,7 +270,7 @@ check('parseProject normalizes partial markers', () => {
     schemaVersion: 1, name: 'x', tempo: 120,
     rack: { components: [], connections: [] },
     tracks: [],
-    markers: [{ name: 'OnlyName' }, { tick: -5 }, 'garbage'],
+    markers: [{ name: 'OnlyName' }, {}, {}],
   };
   const p = parseProject(raw);
   const m = p.markers[0];
@@ -326,7 +328,7 @@ check('defaultTrackData starts with no folder and not collapsed', () => {
 
 check('round-trip preserves folder and collapsed', () => {
   const st = fixtureState();
-  st.tracks = [defaultTrackData({ id: 'trk_1', folder: 'trk_9', collapsed: true })];
+  st.tracks = [defaultTrackData({ id: 'trk_1', folder: 'trk_9', collapsed: true }), defaultTrackData({ id: 'trk_9' })];
   const p = roundTrip(st);
   const t = p.tracks.find(x => x.id === 'trk_1');
   return t && t.folder === 'trk_9' && t.collapsed === true;
@@ -409,6 +411,7 @@ check('parseProject normalizes missing and partial assets', () => {
 });
 check('normalizeClip keeps valid clip audio refs', () => {
   const p = parseProject({
+    assets: [{ hash: 'h1' }],
     schemaVersion: 1, name: 'x', tempo: 120,
     rack: { components: [], connections: [] },
     tracks: [{ id: 'trk_1', grid: [], rt: [], clips: [
@@ -427,15 +430,84 @@ check('normalizeClip keeps source offset, defaults to zero', () => {
   }).tracks[0].clips[0].offset;
   return mk({ id: 'c1', start: 960, length: 960, offset: 480, events: [] }) === 480
     && mk({ id: 'c2', start: 0, length: 960, events: [] }) === 0
-    && mk({ id: 'c3', start: 0, length: 960, offset: -5, events: [] }) === 0;
+;
 });
-check('normalizeClip drops invalid clip audio to null', () => {
+check('normalizeClip defaults absent audio and rejects malformed refs', () => {
   const mk = (audio) => parseProject({
     schemaVersion: 1, name: 'x', tempo: 120,
     rack: { components: [], connections: [] },
     tracks: [{ id: 'trk_1', grid: [], rt: [], clips: [{ id: 'c1', start: 0, length: 960, events: [], audio }] }],
   }).tracks[0].clips[0].audio;
-  return mk(undefined) === null && mk(null) === null && mk({ name: 'no-hash' }) === null;
+  if (mk(undefined) !== null || mk(null) !== null) return false;
+  try { mk({ name: 'no-hash' }); return false; } catch (_) { return true; }
+});
+
+// Strict validation regressions: every supplied invalid value is rejected.
+function validDocument() {
+  return { ...defaultProject(), assets: [{ hash: 'audio1' }],
+    tracks: [{ id: 't1', clips: [{ id: 'c1', start: 0, length: 960,
+      events: [{ id: 'e1', note: 'C4', start: 0, dur: 120 }], audio: { hash: 'audio1' } }] }] };
+}
+const invalidCases = [
+  ['NaN tempo', p => p.tempo = NaN], ['infinite tempo', p => p.tempo = Infinity],
+  ['zero tempo', p => p.tempo = 0], ['string tempo', p => p.tempo = '120'],
+  ['null schema', p => p.schemaVersion = null], ['fractional schema', p => p.schemaVersion = 1.5],
+  ['zero schema', p => p.schemaVersion = 0], ['NaN schema', p => p.schemaVersion = NaN],
+  ['negative schema', p => p.schemaVersion = -1], ['string schema', p => p.schemaVersion = '1'],
+  ['duplicate tracks', p => p.tracks.push(structuredClone(p.tracks[0]))],
+  ['duplicate clips', p => p.tracks[0].clips.push(structuredClone(p.tracks[0].clips[0]))],
+  ['duplicate events', p => p.tracks[0].clips[0].events.push({ ...p.tracks[0].clips[0].events[0] })],
+  ['duplicate assets', p => p.assets.push({ hash: 'audio1' })],
+  ['dangling active track', p => p.activeTrackId = 'missing'],
+  ['dangling folder', p => p.tracks[0].folder = 'missing'],
+  ['cyclic folder', p => p.tracks[0].folder = 't1'],
+  ['dangling asset', p => p.assets = []],
+  ['negative offset', p => p.tracks[0].clips[0].offset = -1],
+  ['zero length', p => p.tracks[0].clips[0].length = 0],
+  ['invalid note', p => p.tracks[0].clips[0].events[0].note = 'C99'],
+  ['velocity overflow', p => p.tracks[0].clips[0].events[0].velocity = 128],
+  ['channel overflow', p => p.tracks[0].midiChannel = 16],
+  ['fractional channel', p => p.tracks[0].clips[0].events[0].channel = 1.5],
+  ['zero duration', p => p.tracks[0].clips[0].events[0].dur = 0],
+  ['negative audio gain', p => p.tracks[0].clips[0].audio.gain = -1],
+  ['invalid sustain', p => p.tracks[0].adsr = { s: 2 }],
+  ['unknown insert', p => p.tracks[0].inserts = [{ id: 'i1', type: 'missing' }]],
+  ['bad insert mix', p => p.tracks[0].inserts = [{ id: 'i1', type: 'delay', params: { mix: 2 } }]],
+  ['invalid loop', p => p.loopStartTicks = p.loopEndTicks],
+  ['negative marker', p => p.markers = [{ tick: -1 }]],
+  ['malformed marker', p => p.markers = ['garbage']],
+  ['malformed tracks', p => p.tracks = {}],
+  ['malformed rack', p => p.rack = []],
+  ['unsafe ID', p => p.tracks[0].id = '__proto__'],
+  ['unknown component', p => p.rack.components = [{ id: 'd1', type: 'unknown' }]],
+  ['dangling route', p => p.rack.connections = [{ from: 'missing', to: 'master' }]],
+  ['duplicate devices', p => p.rack.components = [{id:'d1',type:'filter'},{id:'d1',type:'filter'}]],
+  ['duplicate inserts', p => p.tracks[0].inserts = [{id:'i1',type:'delay'},{id:'i1',type:'delay'}]],
+  ['device namespace collision', p => { p.rack.components = [{id:'d1',type:'filter'}]; p.tracks[0].inserts = [{id:'d1',type:'delay'}]; }],
+  ['invalid device parameter', p => p.rack.components = [{id:'d1',type:'adsr',params:{s:2}}]],
+  ['unsupported filter', p => p.rack.components = [{id:'d1',type:'filter',params:{type:'notch'}}]],
+  ['invalid LFO rate', p => p.rack.components = [{id:'d1',type:'lfo',params:{rate:21}}]],
+  ['invalid output channel', p => { p.rack.components = [{id:'d1',type:'filter'}]; p.rack.connections = [{from:'d1',to:'master',outChannel:1}]; }],
+  ['duplicate routes', p => { p.rack.components = [{id:'d1',type:'filter'}]; p.rack.connections = [{from:'d1',to:'master'},{from:'d1',to:'master'}]; }],
+  ['invalid legacy event', p => p.tracks[0].rt = [{ note:'C4',start:0,dur:-1 }]],
+  ['malformed grid cell', p => p.tracks[0].grid = [{ note:'C4',dur:0 }]],
+  ['nested infinity', p => p.extension = { value: Infinity }],
+  ['null volume', p => p.tracks[0].volume = null],
+];
+invalidCases.forEach(([name, mutate]) => check('strict validation rejects ' + name, () => {
+  const p = validDocument(); mutate(p);
+  try { parseProject(p); return false; } catch (_) { return true; }
+}));
+check('parse leaves input unchanged and owns all nested state', () => {
+  const input = validDocument(), before = JSON.stringify(input);
+  const p = parseProject(input);
+  p.tracks[0].clips[0].events[0].note = 'D4'; p.assets[0].name = 'changed';
+  return JSON.stringify(input) === before;
+});
+check('valid MIDI boundary values and fractional ticks survive', () => {
+  const p = validDocument();
+  p.tracks[0].clips[0].events = [{ note: 'G9', start: 0.5, dur: 0.25, velocity: 127, channel: 15, bend: -1 }];
+  return parseProject(p).tracks[0].clips[0].events[0].start === 0.5;
 });
 
 summary.textContent = `SUMMARY: ${passed.length} passed, ${failed.length} failed`;
