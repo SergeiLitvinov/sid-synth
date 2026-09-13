@@ -1,3 +1,4 @@
+import { validateInput } from './validation.js';
 import { SCHEMA_VERSION, defaultProject, defaultTrackData, defaultClip } from './defaultProject.js';
 import { normalizeMarker } from './markers.js';
 import { normalizeAsset } from '../audio/assetStore.js';
@@ -8,6 +9,7 @@ import { gridToClipEvents, rtToClipEvents, mergeClipEvents } from './clipEvents.
 // Throws with a descriptive message on any structural problem. Kept strict
 // enough that a round-trip can never produce a doc the app cannot load.
 export function validateProject(p) {
+  validateInput(p);
   if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('project must be an object');
   if (typeof p.schemaVersion !== 'number') throw new Error('missing schemaVersion');
   if (p.schemaVersion > SCHEMA_VERSION) throw new Error('unsupported schemaVersion ' + p.schemaVersion);
@@ -197,7 +199,9 @@ export function parseProject(data) {
   if (!project || typeof project !== 'object' || Array.isArray(project)) {
     throw new Error('invalid project data');
   }
-  if (typeof project.schemaVersion !== 'number' || project.schemaVersion < 1) {
+  validateInput(project);
+  project = structuredClone(project);
+  if (project.schemaVersion === undefined) {
     project.schemaVersion = SCHEMA_VERSION;
   }
   if (project.schemaVersion > SCHEMA_VERSION) {
@@ -220,7 +224,8 @@ export function parseProject(data) {
     : [];
   project.markers = Array.isArray(project.markers) ? project.markers.map(normalizeMarker) : [];
   project.assets = Array.isArray(project.assets) ? project.assets.map(normalizeAsset) : [];
-  project.activeTrackId = project.activeTrackId ?? (project.tracks[0] && project.tracks[0].id) ?? null;
+  if (project.activeTrackId === undefined) project.activeTrackId = project.tracks[0]?.id ?? null;
+  validateProject(project);
   return project;
 }
 

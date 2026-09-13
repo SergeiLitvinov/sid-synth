@@ -1,3 +1,4 @@
+import { prepareAudio } from '../audio/prepareAudio.js';
 import { OscillatorComponent } from '../components/OscillatorComponent.js';
 import { FilterComponent } from '../components/FilterComponent.js';
 import { AdsrComponent } from '../components/AdsrComponent.js';
@@ -62,41 +63,42 @@ export function createRackController({ ctx, masterGain, transport = null }) {
     return m ? Number(m[1]) : ++oscSeq;
   }
 
-  function createComponent(type, id, x, y) {
+  function createComponent(type, id, x, y, stage = null) {
+    const audioContext = stage ? stage.audio.ctx : ctx;
     let comp;
     const newId = `${type}_${++componentId}`;
 
     switch(type) {
       case 'oscillator':
-        comp = new OscillatorComponent(ctx, oscNumberFor(id));
+        comp = new OscillatorComponent(audioContext, oscNumberFor(id));
         break;
       case 'filter':
-        comp = new FilterComponent(ctx);
+        comp = new FilterComponent(audioContext);
         break;
       case 'adsr':
-        comp = new AdsrComponent(ctx);
+        comp = new AdsrComponent(audioContext);
         break;
       case 'effects':
-        comp = new EffectsComponent(ctx);
+        comp = new EffectsComponent(audioContext);
         break;
       case 'lfo':
-        comp = new LfoComponent(ctx);
+        comp = new LfoComponent(audioContext);
         break;
       case 'mixer':
-        comp = new MixerComponent(ctx);
+        comp = new MixerComponent(audioContext);
         break;
       case 'splitter':
-        comp = new SplitterComponent(ctx);
+        comp = new SplitterComponent(audioContext);
         break;
       case 'sequencer':
-        comp = new SequencerComponent(ctx);
+        comp = new SequencerComponent(audioContext);
         break;
       default:
         return;
     }
 
-    components[newId] = comp;
-    rack.appendChild(comp.element);
+    (stage ? stage.components : components)[newId] = comp;
+    (stage ? stage.rack : rack).appendChild(comp.element);
     comp.element.style.left = Math.max(0, x - 100) + 'px';
     comp.element.style.top = Math.max(0, y - 30) + 'px';
     makeDraggable(comp.element, newId);
@@ -104,7 +106,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
     // Sequencer note hook (scheduled on the Web Audio timeline)
     if (comp.type === 'sequencer' && comp.seq) {
       comp.seq.onStep = (step, note, t0, dur) => { if (note) scheduleNote(note, t0, dur); };
-      if (sharedTransport && comp.attachTransport) comp.attachTransport(sharedTransport);
+      if (!stage && sharedTransport && comp.attachTransport) comp.attachTransport(sharedTransport);
     }
 
     // Close button handler
@@ -123,9 +125,63 @@ export function createRackController({ ctx, masterGain, transport = null }) {
       });
     }
 
-    router.initPortClicks();
-    router.drawConnections();
-    emitMutate();
+    if (!stage) {
+      router.initPortClicks();
+      router.drawConnections();
+      emitMutate();
+    }
+    return newId;
+  }
+
+  let projectBus = null;
+  // Construct and wire a detached, muted rack before touching the live one.
+  function prepareRack(snapshot) {
+    const bus = ctx.createGain();
+    bus.gain.value = 0;
+    const stage = { components: {}, rack: document.createElement('div'), audio: prepareAudio(ctx) };
+    const stagedRouter = createRouter({ components: stage.components, masterGain: bus,
+      rack: stage.rack, svgEl: document.createElementNS('http://www.w3.org/2000/svg', 'svg'), masterPortEl: null });
+    let adopted = false;
+    const dispose = () => {
+      if (adopted) return;
+      Object.values(stage.components).forEach(c => { try { c.dispose(); } catch (_) {} c.element.remove(); });
+      stage.audio.dispose();
+      bus.disconnect();
+    };
+    try {
+      const ids = new Map();
+      snapshot.components.forEach(c => {
+        const newId = createComponent(c.type, c.params?.n !== undefined ? 'osc' + c.params.n : c.id, 0, 0, stage);
+        if (!newId) throw new Error('Unsupported rack device: ' + c.type);
+        ids.set(c.id, newId);
+        const comp = stage.components[newId];
+        comp.element.style.left = c.x + 'px';
+        comp.element.style.top = c.y + 'px';
+        applyParams(comp, c.params);
+      });
+      snapshot.connections.forEach(c => {
+        const count = stagedRouter.connections.length;
+        stagedRouter.addConnection(ids.get(c.from), c.to === 'master' ? 'master' : ids.get(c.to), c.toChannel ?? null, c.outChannel ?? 0);
+        if (stagedRouter.connections.length !== count + 1) throw new Error('Cannot prepare rack connection');
+      });
+      bus.connect(masterGain);
+    } catch (e) { dispose(); throw e; }
+    return { dispose, commit() {
+      clearRack(true);
+      projectBus = bus;
+      router.setMasterGain(bus);
+      Object.assign(components, stage.components);
+      Object.values(stage.components).forEach(c => {
+        rack.appendChild(c.element);
+        if (sharedTransport && c.attachTransport) c.attachTransport(sharedTransport);
+      });
+      router.connections.push(...stagedRouter.connections);
+      adopted = true;
+      stage.audio.commit();
+      bus.gain.value = 1;
+      router.initPortClicks();
+      router.drawConnections();
+    } };
   }
 
   let dragRAF = null;
@@ -288,14 +344,16 @@ export function createRackController({ ctx, masterGain, transport = null }) {
   });
 
   // User presets (localStorage)
-  function clearRack() {
+  function clearRack(silent = false) {
+    router.setMasterGain(masterGain);
+    if (projectBus) { projectBus.disconnect(); projectBus = null; }
     Object.keys(components).forEach(id => {
       const comp = components[id];
       try { comp.dispose(); } catch(e) {}
       comp.element.remove();
       delete components[id];
     });
-    router.clear();
+    router.clear(silent);
     router.initPortClicks();
   }
 
@@ -342,6 +400,6 @@ export function createRackController({ ctx, masterGain, transport = null }) {
   patchStore.refreshPresetList();
 
 
-  return { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport, setOnMutate };
+  return { rack, components, router, createComponent, prepareRack, clearRack, playNote, stopAll, setTransport, setOnMutate };
 }
 

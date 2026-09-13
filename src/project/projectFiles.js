@@ -93,7 +93,7 @@ export async function importBundle(input, { store } = {}) {
     rawProject = doc; // raw project document, no wrapper
   } else {
     if (doc.kind !== BUNDLE_KIND) throw new Error('bundle: not a SID Synth project file');
-    if (typeof doc.bundleVersion === 'number' && doc.bundleVersion > BUNDLE_VERSION) {
+    if (doc.bundleVersion !== BUNDLE_VERSION) {
       throw new Error('bundle: unsupported bundle version ' + doc.bundleVersion);
     }
     if (Array.isArray(doc.media)) media = doc.media;
