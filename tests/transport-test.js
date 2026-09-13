@@ -485,10 +485,13 @@ check('loop wrap keeps engine position coherent with the transport', () => {
 check('pause keeps position and stops; getState reports paused', () => {
   const t = createTransport({ bpm: 120 });
   t.play();
+  t._clearTimer();
   t._loopPosTicks = 960;
   t.pause();
   const s = t.getState();
-  return s.playing === false && s.paused === true && s.loopPosTicks === 960;
+  const ok = s.playing === false && s.paused === true && s.loopPosTicks === 960;
+  t.stop();
+  return ok;
 });
 check('play after pause resumes without onStart', () => {
   const t = createTransport({ bpm: 120 });
@@ -497,9 +500,11 @@ check('play after pause resumes without onStart', () => {
   t.onStart(() => starts++);
   t.onResume(() => resumes++);
   t.play();
+  t._clearTimer();
   t._loopPosTicks = 960;
   t.pause();
   t.play();
+  t._clearTimer();
   const ok = starts === 1 && resumes === 1 && t.playing === true && t.paused === false
     && t._loopPosTicks === 960;
   t.stop();
@@ -508,6 +513,7 @@ check('play after pause resumes without onStart', () => {
 check('stop clears the paused flag', () => {
   const t = createTransport({ bpm: 120 });
   t.play();
+  t._clearTimer();
   t.pause();
   t.stop();
   return t.paused === false && t.playing === false && t._loopPosTicks === 0;

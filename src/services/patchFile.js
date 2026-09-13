@@ -19,7 +19,7 @@ export function createPatchFile({ components, connections, captureParams, create
     URL.revokeObjectURL(url);
   }
 
-  function loadPatch(file) {
+  function loadPatch(file, onDone) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -47,9 +47,11 @@ export function createPatchFile({ components, connections, captureParams, create
         });
         drawConnections();
         console.log('Patch loaded:', patch.components.map(c => c.type).join(', '));
+        if (onDone) onDone(null);
       } catch (err) {
         console.error('Failed to load patch:', err);
         alert('Failed to load patch: ' + err.message);
+        if (onDone) onDone(err);
       }
     };
     reader.readAsText(file);

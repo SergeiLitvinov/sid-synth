@@ -43,7 +43,7 @@ import { createInputUI } from './audio/inputUI.js';
     analyserFreq,
   }).start();
 
-  const { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport } = createRackController({ ctx, masterGain });
+  const { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport, setOnMutate } = createRackController({ ctx, masterGain });
 
   // Musical keyboard + MIDI
   let recNoteOn = null, recNoteOff = null;
@@ -221,18 +221,42 @@ import { createInputUI } from './audio/inputUI.js';
     },
   });
 
-  // Trigger a save on rack DOM mutations, rack param changes, and history
-  // changes (undo/redo/commands). A 3s safety interval covers anything missed.
-  new MutationObserver(() => projectStore.markDirty()).observe(rack, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-  });
+  // Event-based autosave (P0): rack mutations, history, and transport state
+  // changes mark the store dirty; unchanged content is never rewritten
+  // (revision check inside the store). No MutationObserver, no blind interval.
+  setOnMutate(() => projectStore.markDirty());
   rack.addEventListener('change', () => projectStore.markDirty());
   history.subscribe(() => projectStore.markDirty());
   transport.onStateChange(() => projectStore.markDirty());
 
-  projectStore.restore();
+  // Save-status line: dirty / saved time / error. Bundle operations set
+  // their own message afterwards (they save synchronously first).
+  function renderSaveStatus(s) {
+    const el = document.getElementById('saveStatus');
+    if (!el) return;
+    if (s.state === 'error') el.textContent = 'Сохранение недоступно: ' + (s.error || 'error');
+    else if (s.state === 'dirty') el.textContent = '● Есть несохранённые изменения…';
+    else if (s.state === 'saved' && s.savedAt) {
+      try { el.textContent = 'Сохранено ' + new Date(s.savedAt).toLocaleTimeString(); }
+      catch (e) { el.textContent = 'Сохранено'; }
+    }
+  }
+  projectStore.subscribe(renderSaveStatus);
+
+  const restored = projectStore.restore();
+  if (!restored) {
+    // Nothing (or unreadable data) under the main key: offer the newest
+    // backup snapshot instead of an empty session.
+    let snap = null;
+    try { snap = projectStore.recoverSnapshot(); } catch (e) { snap = null; }
+    if (snap) {
+      applyProject(snap);
+      projectStore.saveNow();
+      const el = document.getElementById('saveStatus');
+      if (el) el.textContent = 'Восстановлено из резервной копии'
+        + (projectStore.isBlocked() ? ' (основное сохранение не читается)' : '');
+    }
+  }
   if (recorderUI) recorderUI.renderAll();
   if (arranger) arranger.render();
 
@@ -272,7 +296,14 @@ import { createInputUI } from './audio/inputUI.js';
     : null;
 
   router.drawConnections();
-  setInterval(() => projectStore.markDirty(), 3000);
+
+  // Flush a pending autosave before the page goes away (localStorage is
+  // synchronous, so this actually lands).
+  const flushAutosave = () => { try { projectStore.flush(); } catch (e) {} };
+  window.addEventListener('beforeunload', flushAutosave);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushAutosave();
+  });
 
   // Portable project files (P0): NEW / OPEN / SAVE / SAVE AS move the whole
   // song plus its audio as one JSON bundle. SAVE PATCH stays rack-only.

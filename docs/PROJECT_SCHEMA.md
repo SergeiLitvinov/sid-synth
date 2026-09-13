@@ -148,14 +148,21 @@ playbackMode добавлен как необязательное поле ве�
 
 ## Персистенция (`src/project/projectStore.js`)
 
-- `createProjectStore({ storage, storageKey, autosaveKey, tracksKey, debounceMs, capture, apply })`
+- `createProjectStore({ storage, storageKey, autosaveKey, tracksKey, debounceMs, maxSnapshots, capture, apply })`
   сохраняет весь project snapshot в **один ключ** `sidSynthProject` (debounce 600мс).
   `capture`/`apply` поставляет `projectSession.js`, подключаемый в main.js; store не зависит от DOM. `onError` сообщает ошибки сохранения UI.
-- API: `saveNow`, `save` (debounced), `markDirty`, `restore`, `readRaw`, `readProject`, `clear`.
+- Revision-based autosave: `revisionOf(doc)` (FNV-1a по JSON) — неизменённый контент не перезаписывается.
+  API: `saveNow`, `save` (debounced), `markDirty`, `flush` (для beforeunload/pagehide),
+  `restore`, `readRaw`, `readProject`, `clear`, `recoverSnapshot`, `listSnapshots`,
+  `getSaveState` (clean/dirty/saved/error + savedAt/revision), `getJournal`, `isBlocked`, `subscribe`.
+- Каждый успешный save с новой ревизией ротирует предыдущий raw в резервное кольцо
+  (`<key>:snapshots`, до 5, пропуск >1.5MB, retry после prune при quota); `recoverSnapshot()`
+  возвращает новейший распарсенный бэкап. `restore()` сидирует ревизию, чистый старт не пишет.
 - `restore()`: читает `sidSynthProject`; только при его отсутствии мигрирует legacy-ключи.
   Legacy удаляются лишь после успешной записи нового документа. При ошибке чтения/неподдерживаемой версии существующий снимок сохраняется, автоматическая перезапись блокируется и вызывается onError.
-- Триггеры сохранения (в `main.js`): MutationObserver на рэке, `change`-событие,
-  `history.subscribe(...)`, safety-interval 3с.
+- Триггеры сохранения (в `main.js`): `setOnMutate` рэка (create/remove/drag/preset/patch/connections),
+  `change`-событие, `history.subscribe(...)`, `transport.onStateChange(...)`. Без MutationObserver
+  и слепого интервала. Boot без ключа/при битой записи восстанавливается из бэкапа со статусом.
 
 ## Round-trip
 

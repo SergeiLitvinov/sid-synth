@@ -1,4 +1,5 @@
 import { createProjectStore, PROJECT_STORAGE_KEY, LEGACY_AUTOSAVE_KEY, LEGACY_TRACKS_KEY } from '../src/project/projectStore.js';
+import { migrateProject } from '../src/project/migrate.js';
 import { defaultProject } from '../src/project/defaultProject.js';
 
 const results = document.getElementById('results');
@@ -189,6 +190,100 @@ check('clear removes only the unified key', () => {
   store.saveNow();
   store.clear();
   return storage.getItem(PROJECT_STORAGE_KEY) === null;
+});
+
+// ---- revision-based autosave (P0) ---------------------------------------------
+check('saveNow skips writes when the revision is unchanged', () => {
+  const storage = fakeStorage();
+  let writes = 0;
+  const origSet = storage.setItem;
+  storage.setItem = (k, v) => { writes++; return origSet(k, v); };
+  // One fixed doc: fresh captures carry millisecond timestamps that would
+  // otherwise fake a content change.
+  const doc = makeDoc();
+  const store = createProjectStore({ storage, capture: () => doc });
+  const first = store.saveNow();
+  const second = store.saveNow();
+  const journal = store.getJournal();
+  return first === true && second === false && writes === 1
+    && journal[journal.length - 1].result === 'clean-skip'
+    && store.getSaveState().state === 'clean';
+});
+check('changed content writes and rotates a snapshot', () => {
+  const storage = fakeStorage();
+  let doc = makeDoc({ tempo: 100 });
+  const store = createProjectStore({ storage, capture: () => doc });
+  store.saveNow();
+  doc = makeDoc({ tempo: 140 });
+  store.saveNow();
+  const snaps = store.listSnapshots();
+  const journal = store.getJournal();
+  return snaps.length === 1 && JSON.parse(storage.getItem(PROJECT_STORAGE_KEY)).tempo === 140
+    && journal.some(e => e.result === 'saved') && journal.some(e => e.result === 'snapshot')
+    && store.getSaveState().revision !== null;
+});
+check('snapshots rotate bounded and recover the newest', () => {
+  const storage = fakeStorage();
+  let tempo = 100;
+  const store = createProjectStore({ storage, capture: () => makeDoc({ tempo }), maxSnapshots: 3 });
+  for (let i = 0; i < 6; i++) { tempo = 100 + i; store.saveNow(); }
+  const snaps = store.listSnapshots();
+  const back = store.recoverSnapshot();
+  return snaps.length === 3 && back && back.tempo === 104;
+});
+check('corrupt main key blocks and recovers from snapshot', () => {
+  const storage = fakeStorage();
+  let doc = makeDoc({ tempo: 100 });
+  const store = createProjectStore({ storage, capture: () => doc });
+  store.saveNow();
+  doc = makeDoc({ tempo: 120 });
+  store.saveNow(); // snapshots tempo-100
+  storage.setItem(PROJECT_STORAGE_KEY, '{corrupt');
+  let applied = null;
+  const store2 = createProjectStore({ storage, apply: (p) => { applied = p; } });
+  const got = store2.restore();
+  const back = store2.recoverSnapshot();
+  return got === null && store2.isBlocked() === true && back && back.tempo === 100 && applied === null;
+});
+check('flush writes a pending dirty state immediately', () => {
+  const storage = fakeStorage();
+  const store = createProjectStore({ storage, debounceMs: 60000, capture: () => makeDoc() });
+  store.markDirty();
+  if (storage.getItem(PROJECT_STORAGE_KEY) !== null) return false;
+  store.flush();
+  return JSON.parse(storage.getItem(PROJECT_STORAGE_KEY)).id === 'proj_test';
+});
+check('subscribers see dirty and saved transitions', () => {
+  const storage = fakeStorage();
+  const states = [];
+  const store = createProjectStore({ storage, debounceMs: 10, capture: () => makeDoc() });
+  store.subscribe(s => states.push(s.state));
+  store.markDirty();
+  store.saveNow();
+  return states.includes('dirty') && states[states.length - 1] === 'saved'
+    && store.getSaveState().savedAt !== null;
+});
+check('capture errors surface in state and journal', () => {
+  const storage = fakeStorage();
+  const errs = [];
+  const store = createProjectStore({ storage, capture: () => { throw new Error('boom'); }, onError: (e) => errs.push(e) });
+  const ok = store.saveNow();
+  const s = store.getSaveState();
+  return ok === false && s.state === 'error' && /boom/.test(s.error) && errs.length === 1
+    && store.getJournal().some(e => e.result === 'error');
+});
+check('restore seeds the revision so a clean boot writes nothing', () => {
+  // Seed with the normalized round-trip: legacy-shaped fixtures migrate on
+  // read, so the capture must serve the same normalized shape production does.
+  const doc = migrateProject(JSON.parse(JSON.stringify(makeDoc())));
+  const storage = fakeStorage({ [PROJECT_STORAGE_KEY]: JSON.stringify(doc) });
+  let writes = 0;
+  const origSet = storage.setItem;
+  storage.setItem = (k, v) => { writes++; return origSet(k, v); };
+  const store = createProjectStore({ storage, capture: () => doc });
+  store.restore();
+  store.saveNow();
+  return writes === 0;
 });
 
 Promise.all(pending).then(() => {

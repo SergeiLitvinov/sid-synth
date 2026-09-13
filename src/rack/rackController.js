@@ -23,7 +23,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
   // because the transport is created after the rack in main.js).
   let sharedTransport = transport || null;
 
-  const router = createRouter({ components, masterGain, rack, svgEl, masterPortEl });
+  const router = createRouter({ components, masterGain, rack, svgEl, masterPortEl, onMutate: () => emitMutate() });
 
   // Tool items drag start
   document.querySelectorAll('.tool-item').forEach(item => {
@@ -119,15 +119,28 @@ export function createRackController({ ctx, masterGain, transport = null }) {
         delete components[newId];
         router.drawConnections();
         router.initPortClicks();
+        emitMutate();
       });
     }
 
     router.initPortClicks();
     router.drawConnections();
+    emitMutate();
   }
 
   let dragRAF = null;
   let dragState = null;
+
+
+  // Event-based mutation signal for autosave (P0): the bootstrap subscribes
+  // via setOnMutate instead of a DOM MutationObserver.
+  let onMutate = null;
+  function emitMutate() {
+    try { if (onMutate) onMutate(); } catch (e) {}
+  }
+  function setOnMutate(fn) {
+    onMutate = typeof fn === 'function' ? fn : null;
+  }
 
   // Attach the shared transport to every rack sequencer (existing + future).
   // Global Play/Stop/Seek then drives the patterns; tempo comes from the
@@ -142,6 +155,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
   function makeDraggable(el) {
     let isDragging = false;
     let startX = 0, startY = 0;
+    let moved = false;
 
     el.addEventListener('pointerdown', e => {
       if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.target.closest('svg') || e.target.closest('.conn-point') || e.target.classList.contains('close-btn')) return;
@@ -163,6 +177,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
       y = Math.max(0, Math.min(y, rackRect.height - el.offsetHeight));
       el.style.left = x + 'px';
       el.style.top = y + 'px';
+      moved = true;
       if (router.connections.length && !dragRAF) {
         dragState = { el };
         dragRAF = requestAnimationFrame(updateDragConnections);
@@ -176,6 +191,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
         if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
         dragState = null;
         router.drawConnections();
+        if (moved) { moved = false; emitMutate(); }
       }
     });
   }
@@ -266,6 +282,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
         if (p.osc1) applyToAll('oscillator', p.osc1);
         if (p.filter) applyToAll('filter', p.filter);
         if (p.adsr) applyToAll('adsr', p.adsr);
+        emitMutate();
       });
     }
   });
@@ -312,7 +329,7 @@ export function createRackController({ ctx, masterGain, transport = null }) {
   if (savePatchBtn) savePatchBtn.onclick = patchFile.savePatch;
   if (loadPatchBtn) loadPatchBtn.onclick = () => patchFileInput.click();
   if (patchFileInput) patchFileInput.onchange = (e) => {
-    if (e.target.files[0]) patchFile.loadPatch(e.target.files[0]);
+    if (e.target.files[0]) patchFile.loadPatch(e.target.files[0], () => emitMutate());
   };
 
   // Preset buttons
@@ -325,6 +342,6 @@ export function createRackController({ ctx, masterGain, transport = null }) {
   patchStore.refreshPresetList();
 
 
-  return { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport };
+  return { rack, components, router, createComponent, clearRack, playNote, stopAll, setTransport, setOnMutate };
 }
 

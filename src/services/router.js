@@ -1,7 +1,10 @@
-export function createRouter({ components, masterGain, rack, svgEl, masterPortEl }) {
+export function createRouter({ components, masterGain, rack, svgEl, masterPortEl, onMutate }) {
   const connections = [];
   let currentConnectionFrom = null;
   let tempLine = null;
+  function emitMutate() {
+    try { if (onMutate) onMutate(); } catch (e) {}
+  }
   let selectedConnection = null;
 
   function drawConnections() {
@@ -111,6 +114,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
       }
       connections.splice(index, 1);
       drawConnections();
+      emitMutate();
       return;
     }
 
@@ -131,6 +135,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
 
     connections.splice(index, 1);
     drawConnections();
+    emitMutate();
   }
 
   function addConnection(fromId, toId, toChannel = null, outChannel = 0) {
@@ -169,6 +174,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
     }
 
     drawConnections();
+    emitMutate();
   }
 
   function initPortClicks() {
@@ -318,6 +324,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
     currentConnectionFrom = null;
     if (tempLine) { tempLine.remove(); tempLine = null; }
     drawConnections();
+    emitMutate();
   }
 
   function removeConnectionsOf(id) {
@@ -325,6 +332,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
     connections.length = 0;
     connections.push(...next);
     drawConnections();
+    emitMutate();
   }
 
   return {
