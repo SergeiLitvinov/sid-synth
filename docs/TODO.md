@@ -44,7 +44,7 @@
 
 Спецификация: [UI_UX.md](UI_UX.md). Сначала рабочие сценарии и композиция, затем визуальная полировка.
 
-- [ ] Один верхний transport: play/pause/stop/record, позиция, tempo, loop, metronome и save status. Ясно различать MIDI record и audio take.
+- [x] Один верхний transport: play/pause/stop/record, позиция, tempo, loop, metronome и save status. Ясно различать MIDI record и audio take. Готово 2026-09-12: LOOP toggle + persistent METRO toggle (sine blips via `transport.onMetronomeBeat`, beat detection с reset на loop wrap/unsubscribe) добавлены в recorderUI transport bar; `transport.js` — `metronomeEnabled`, `_onMetronomeBeat`, `_lastBeat`, beat detection в `_tick()`, `setMetronomeEnabled()`, `getState().metronomeEnabled`, reset в stop/play/wrap. transport-test 64/64 (8 новых: getState/set/state/fire/no-fire/wrap/unsub/loop toggle), полный юнит 814/814, app check чистый. Arranger loop toggle сохранён для удобства (синхронизирован через transport).
 - [ ] Arranger в центре, track headers слева, browser/inspector сбоку, piano/audio editor в нижнем dock; SID Rack отдельным workspace/device view.
 - [ ] Контекстный inspector выбранного объекта, понятные empty states и одно основное действие в каждом.
 - [ ] Подписи вместо неоднозначных букв: Add track, Split, Duplicate, Quantize, Record audio; tooltips с shortcut и компактный режим.

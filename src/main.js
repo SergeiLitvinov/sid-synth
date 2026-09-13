@@ -120,7 +120,7 @@ import { createInputUI } from './audio/inputUI.js';
   // drives the patterns and project tempo sets the step rate.
   setTransport(transport);
   const recorderUI = recorderEl
-    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history, exportWav, midiApi })
+    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history, exportWav, midiApi, transport })
     : null;
 
   // Linear arranger: ruler + track lanes + playhead on the unified transport.

@@ -43,6 +43,9 @@ export function createTransport(cfg = {}) {
     _onLoopWrap: [],
     _onSeek: [],
     _onStateChange: [],
+    _onMetronomeBeat: [],
+    metronomeEnabled: false,
+    _lastBeat: -1,
   };
 
   Object.defineProperty(t, 'bpm', {
@@ -91,6 +94,7 @@ export function createTransport(cfg = {}) {
       loopPosTicks = t.loopStartTicks + (offset - loop * regionLen);
       if (loop > t._loopCount) {
         t._loopCount = loop;
+        t._lastBeat = -1;
         emit(t._onLoopWrap, t._loopCount);
       }
     } else {
@@ -99,6 +103,7 @@ export function createTransport(cfg = {}) {
       loopPosTicks = totalTicks;
       if (t._loopCount !== 0) {
         t._loopCount = 0;
+        t._lastBeat = -1;
         emit(t._onLoopWrap, 0);
       }
     }
@@ -119,6 +124,15 @@ export function createTransport(cfg = {}) {
       loopCount: loop,
       playing: true,
     });
+
+    // Persistent metronome: fire a beat callback on each quarter-note boundary.
+    if (t.metronomeEnabled && t._onMetronomeBeat.length) {
+      const beat = Math.floor(loopPosTicks / (t.ppq || 480));
+      if (beat !== t._lastBeat) {
+        t._lastBeat = beat;
+        emit(t._onMetronomeBeat, beat, nowAbs);
+      }
+    }
   }
 
   t.getState = () => ({
@@ -136,6 +150,7 @@ export function createTransport(cfg = {}) {
     loopStartTicks: t.loopStartTicks,
     loopEndTicks: t.loopEndTicks,
     projectEndTicks: t.projectEndTicks,
+    metronomeEnabled: t.metronomeEnabled,
   });
 
   t.play = () => {
@@ -159,6 +174,7 @@ export function createTransport(cfg = {}) {
     t._playStartCtx = (t.ctx ? t.ctx.currentTime : 0) + 0.03;
     t._loopPosTicks = 0;
     t._loopCount = 0;
+    t._lastBeat = -1;
     t.playing = true;
     emit(t._onStart);
     emitState();
@@ -179,6 +195,7 @@ export function createTransport(cfg = {}) {
     t.paused = false;
     t._loopPosTicks = 0;
     t._loopCount = 0;
+    t._lastBeat = -1;
     emit(t._onStop);
     emitState();
   };
@@ -247,6 +264,12 @@ export function createTransport(cfg = {}) {
     emitState();
   };
 
+  t.setMetronomeEnabled = (enabled) => {
+    t.metronomeEnabled = !!enabled;
+    t._lastBeat = -1;
+    emitState();
+  };
+
   // loopLenTicks is a derived property: always returns the region length
   // (loopEndTicks - loopStartTicks). The setter is kept for backward compat
   // (sets loopEnd from 0).
@@ -275,6 +298,7 @@ export function createTransport(cfg = {}) {
   t.onLoopWrap = (fn) => { t._onLoopWrap.push(fn); };
   t.onSeek = (fn) => { t._onSeek.push(fn); };
   t.onStateChange = (fn) => { t._onStateChange.push(fn); };
+  t.onMetronomeBeat = (fn) => { t._onMetronomeBeat.push(fn); return () => { t._onMetronomeBeat = t._onMetronomeBeat.filter(f => f !== fn); }; };
 
   // Test hooks: override the clock and drive passes manually.
   t._setClock = (nowMs) => { t._nowMs = nowMs; };

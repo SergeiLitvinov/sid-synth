@@ -16,7 +16,7 @@ const FILTERS = ['none', 'lowpass', 'highpass', 'bandpass'];
 // All state flows through the TrackEngine; this module only renders + forwards
 // DOM events. User edits (add/remove/update/clear/grid) run as undoable
 // commands through the optional `history` (createHistory).
-export function createRecorderUI({ container, engine, history, exportWav, midiApi }) {
+export function createRecorderUI({ container, engine, history, exportWav, midiApi, transport }) {
   const el = container;
   el.classList.add('recorder');
   el.innerHTML = `
@@ -34,6 +34,8 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
       <label class="rec-bpm">BPM
         <input type="number" id="recBpm" min="40" max="240" value="${engine.bpm}" step="1">
       </label>
+      <button class="rec-btn" id="recLoop" title="Toggle loop playback (loops the region between locators)">LOOP</button>
+      <button class="rec-btn" id="recMetronome" title="Toggle metronome click during playback">METRO</button>
       <button class="rec-btn" id="recRecMode" title="Record mode: OVERDUB keeps existing notes, REPLACE clears the clip first">OVERDUB</button>
       <label class="rec-recq" title="Quantize notes as they are recorded">REC Q
         <input type="checkbox" id="recRecQ">
@@ -63,6 +65,8 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   const recUndo = el.querySelector('#recUndo');
   const recRedo = el.querySelector('#recRedo');
   const recMidiDevice = el.querySelector('#recMidiDevice');
+  const recLoop = el.querySelector('#recLoop');
+  const recMetronome = el.querySelector('#recMetronome');
   const modeLabel = document.createElement('label');
   modeLabel.className = 'rec-bpm';
   modeLabel.textContent = 'PLAYBACK ';
@@ -146,6 +150,47 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
   recCancel.addEventListener('click', () => {
     if (typeof engine.cancelTake === 'function') engine.cancelTake();
   });
+
+  // Loop toggle: wires to the shared transport (P1 unified transport bar).
+  if (recLoop && transport) {
+    recLoop.addEventListener('click', () => {
+      transport.setLoopEnabled(!transport.loopEnabled);
+    });
+  }
+
+  // Metronome toggle: persistent click during playback (P1 unified transport bar).
+  // Schedules short sine blips at each quarter-note boundary via the transport's
+  // onMetronomeBeat callback. Uses the same sound as the count-in (metronome.js).
+  if (recMetronome && transport) {
+    let metroCtx = null;
+    let metroUnsub = null;
+    recMetronome.addEventListener('click', () => {
+      const enabled = !transport.metronomeEnabled;
+      transport.setMetronomeEnabled(enabled);
+      if (enabled && !metroUnsub) {
+        metroUnsub = transport.onMetronomeBeat((_beat, audioTime) => {
+          if (!metroCtx) {
+            try { metroCtx = new AudioContext(); } catch (e) { return; }
+          }
+          if (metroCtx.state === 'suspended') try { metroCtx.resume(); } catch (e) {}
+          const osc = metroCtx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.value = _beat % 4 === 0 ? 2400 : 1600;
+          const g = metroCtx.createGain();
+          try {
+            g.gain.setValueAtTime(0, audioTime);
+            g.gain.linearRampToValueAtTime(0.35, audioTime + 0.002);
+            g.gain.exponentialRampToValueAtTime(0.001, audioTime + 0.08);
+          } catch (e) {}
+          try { osc.connect(g); g.connect(metroCtx.destination); } catch (e) {}
+          try { osc.start(audioTime); osc.stop(audioTime + 0.1); } catch (e) {}
+        });
+      } else if (!enabled && metroUnsub) {
+        metroUnsub();
+        metroUnsub = null;
+      }
+    });
+  }
 
   // Record mode (backlog #41): OVERDUB keeps existing clip notes, REPLACE clears
   // the clip before recording. REC Q toggles record-time quantize. The whole
@@ -620,6 +665,14 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
     if (s.playing) renderPos();
     else recPos.textContent = '--';
   };
+
+  // ---- transport callbacks (P1 unified transport bar) -------------------
+  if (transport) {
+    transport.onStateChange((s) => {
+      if (recLoop) recLoop.classList.toggle('on', !!s.loopEnabled);
+      if (recMetronome) recMetronome.classList.toggle('on', !!s.metronomeEnabled);
+    });
+  }
 
   engine.onTick = (t) => {
     if (engine._playing) renderPos();

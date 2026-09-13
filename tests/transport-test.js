@@ -569,6 +569,118 @@ check('sustained notes crossing the loop end replay truncated per pass', () => {
   return hits.length === 2 && hits.every(h => Math.abs(h.dur - 0.125) < 1e-6);
 });
 
+// ---- metronome (P1 unified transport) ---------------------------------------
+check('metronomeEnabled defaults to false in getState', () => {
+  const t = createTransport({ bpm: 120 });
+  t._clearTimer();
+  const s = t.getState();
+  t.stop();
+  return s.metronomeEnabled === false;
+});
+check('setMetronomeEnabled toggles state', () => {
+  const t = createTransport({ bpm: 120 });
+  t._clearTimer();
+  t.setMetronomeEnabled(true);
+  const s = t.getState();
+  t.setMetronomeEnabled(false);
+  t.stop();
+  return s.metronomeEnabled === true && t.metronomeEnabled === false;
+});
+check('metronome fires beat callbacks during playback', () => {
+  const t = createTransport({ bpm: 120, timerMs: 50 });
+  const beats = [];
+  t.onMetronomeBeat((beat, audioTime) => { beats.push({ beat, audioTime }); });
+  t.setMetronomeEnabled(true);
+  // Manually start to avoid _startMs being set to real time before mock.
+  t.playing = true;
+  t._startMs = 0;
+  t._playStartCtx = 0;
+  // 120 BPM = 0.5s/beat = 500ms. Advance past beat 1 then beat 2.
+  t._nowMs = () => 600;
+  t._tick();
+  t._nowMs = () => 1200;
+  t._tick();
+  const ok = beats.length >= 2 && beats[0].beat === 1 && beats[1].beat === 2;
+  t.stop();
+  t.setMetronomeEnabled(false);
+  return ok;
+});
+check('metronome does not fire when disabled', () => {
+  const t = createTransport({ bpm: 120, timerMs: 50 });
+  const beats = [];
+  t.onMetronomeBeat((beat) => { beats.push(beat); });
+  t.setMetronomeEnabled(false);
+  t.playing = true;
+  t._startMs = 0;
+  t._playStartCtx = 0;
+  t._nowMs = () => 600;
+  t._tick();
+  t._nowMs = () => 1200;
+  t._tick();
+  const ok = beats.length === 0;
+  t.stop();
+  return ok;
+});
+check('metronome beat resets on loop wrap', () => {
+  const t = createTransport({ bpm: 120, timerMs: 50 });
+  t.setLoopRegion(0, 960); // 2 beats per loop
+  const beats = [];
+  t.onMetronomeBeat((beat) => { beats.push(beat); });
+  t.setMetronomeEnabled(true);
+  t.playing = true;
+  t._startMs = 0;
+  t._playStartCtx = 0;
+  // First pass: beats 0, 1 at 0ms, 500ms
+  t._nowMs = () => 0;
+  t._tick();
+  t._nowMs = () => 500;
+  t._tick();
+  // Wrap at 1000ms: back to beat 0
+  t._nowMs = () => 1000;
+  t._tick();
+  const ok = beats.length >= 3 && beats[0] === 0 && beats[1] === 1 && beats[2] === 0;
+  t.stop();
+  t.setMetronomeEnabled(false);
+  return ok;
+});
+check('metronome unsub removes beat callbacks', () => {
+  const t = createTransport({ bpm: 120, timerMs: 50 });
+  const beats = [];
+  const unsub = t.onMetronomeBeat((beat) => { beats.push(beat); });
+  t.setMetronomeEnabled(true);
+  t.playing = true;
+  t._startMs = 0;
+  t._playStartCtx = 0;
+  t._nowMs = () => 600;
+  t._tick();
+  const count1 = beats.length;
+  unsub();
+  t._nowMs = () => 1200;
+  t._tick();
+  t.stop();
+  t.setMetronomeEnabled(false);
+  return count1 >= 1 && beats.length === count1;
+});
+check('loop toggle updates transport.loopEnabled', () => {
+  const t = createTransport({ bpm: 120 });
+  t._clearTimer();
+  t.setLoopEnabled(true);
+  const on = t.loopEnabled;
+  t.setLoopEnabled(false);
+  const off = t.loopEnabled;
+  t.stop();
+  return on === true && off === false;
+});
+check('getState includes metronomeEnabled', () => {
+  const t = createTransport({ bpm: 120 });
+  t._clearTimer();
+  t.setMetronomeEnabled(true);
+  const s = t.getState();
+  t.setMetronomeEnabled(false);
+  t.stop();
+  return 'metronomeEnabled' in s && s.metronomeEnabled === true;
+});
+
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;
 if (failed.length) summary.className = 'fail';
 window.__testResults = { passed: passed.length, failed: failed.length };
