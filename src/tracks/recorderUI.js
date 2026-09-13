@@ -16,7 +16,7 @@ const FILTERS = ['none', 'lowpass', 'highpass', 'bandpass'];
 // All state flows through the TrackEngine; this module only renders + forwards
 // DOM events. User edits (add/remove/update/clear/grid) run as undoable
 // commands through the optional `history` (createHistory).
-export function createRecorderUI({ container, engine, history, exportWav, midiApi, transport }) {
+export function createRecorderUI({ container, engine, history, exportWav, midiApi, transport, onStateChange }) {
   const el = container;
   el.classList.add('recorder');
   el.innerHTML = `
@@ -216,7 +216,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
     const cmd = addTrackCommand(engine, { name: 'Track ' + n });
     runCommand(cmd);
     const created = engine.byId[cmd.createdId] || engine.tracks[engine.tracks.length - 1];
-    engine.activeTrackId = created.id;
+    engine.selectTrack(created.id);
     renderAll();
   });
 
@@ -257,7 +257,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
       recRedo.disabled = !s.canRedo;
       // If undo removed the active track, fall back to the first remaining one.
       if (engine.activeTrackId && !engine.byId[engine.activeTrackId] && engine.tracks.length) {
-        engine.activeTrackId = engine.tracks[0].id;
+        engine.selectTrack(engine.tracks[0].id);
       }
       renderAll();
     });
@@ -664,6 +664,7 @@ export function createRecorderUI({ container, engine, history, exportWav, midiAp
     renderGrid();
     if (s.playing) renderPos();
     else recPos.textContent = '--';
+    onStateChange?.(s);
   };
 
   // ---- transport callbacks (P1 unified transport bar) -------------------

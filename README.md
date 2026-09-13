@@ -1,48 +1,40 @@
 # SID Studio / SID Synth
 
-Развивающаяся web-DAW на Web Audio API с модульным SID-вдохновлённым синтезатором и 8-битной эстетикой. Есть мультитрековый recorder, arranger, piano roll/drum editor, импорт и запись аудио, delay/reverb inserts и базовый realtime WAV bounce.
+Web-DAW на Web Audio API с SID-вдохновлённым синтезатором и 8-битным интерфейсом. Сейчас доступны дорожки и MIDI-клипы, arranger, Piano/Drum editor, импорт/запись аудио, delay/reverb, modular rack, portable project files и базовый realtime WAV.
 
 ## Документация
 
-- [Руководство пользователя](docs/USER_GUIDE.md) — запуск, мелодии, треки, клипы, MIDI, audio recording, rack, сохранение и ограничения.
-- [TODO](docs/TODO.md) — только оставшиеся задачи до полноценной DAW.
-- [Аудит репозитория 2026-09-13](docs/AUDIT_2026-09-13.md) — проверка PR, закрытых TODO и отказ от Node; [предыдущий аудит](docs/AUDIT.md).
-- [Архитектура](docs/ARCHITECTURE.md) — границы модулей и план устранения god objects.
-- [UI/UX](docs/UI_UX.md) — спецификация современного 8-битного рабочего пространства.
-- [Формат проекта](docs/PROJECT_SCHEMA.md) и [стандарты кода](docs/CODING_STANDARDS.md).
+- [Руководство пользователя](docs/USER_GUIDE.md) — что работает, как пользоваться и какие ограничения учитывать.
+- [TODO по вехам](docs/TODO.md) — только оставшаяся работа; текущий приоритет — M3, удобный UI/UX.
+- [Справочник разработчика](docs/DEVELOPMENT.md) — устройство кода, схема/валидация, хранение, правила и проверка.
 
-## Запуск
+История аудитов сохранена в Git; текущие инструкции и задачи больше не распределены по отдельным отчётам.
 
-Приложение работает как статический сайт, без npm и сборки. Из каталога проекта:
+## Запуск без Node
+
+Из каталога проекта:
 
 ```powershell
 python serve.py . 3000
 ```
 
-Откройте [localhost:3000](http://localhost:3000). Если Python отсутствует, используйте PowerShell 7:
+Откройте [localhost:3000](http://localhost:3000). Альтернатива без Python:
 
 ```powershell
 pwsh -File tests/serve-ps.ps1
 ```
 
-Тогда адрес — [localhost:3100](http://localhost:3100). Серверы отключают HTTP cache. Web Audio требует действия пользователя, запись входа — разрешения браузера. Поддержку Web MIDI/AudioWorklet/декодеров проверяйте в используемом браузере: полной подтверждённой cross-browser matrix пока нет.
+Тогда адрес — [localhost:3100](http://localhost:3100). Приложение — статический сайт: npm, сборка и установка библиотек не нужны. Звук включается после действия пользователя, запись входа требует разрешения браузера.
+
+Не меняйте host/port/profile без сохранения проекта в файл: localStorage и IndexedDB привязаны к origin.
 
 ## Текущие границы
 
-В RECORDER доступны SONG и PATTERN. Новые проекты используют SONG: все MIDI-клипы, включая клипы в позиции 0, играют один раз в своих границах. PATTERN сохраняет прежний повтор первой 16-шаговой сетки; проекты без сохранённого режима открываются в PATTERN. Есть track mute/solo и inserts, но нет полноценной консоли с шинами/sends/automation. Классический rack монофонический, синтезаторы треков — восьмиголосные.
+Новые проекты используют SONG; PATTERN повторяет выбранный step-клип. MIDI take пока нельзя безопасно перенаправлять сменой выбора во время записи. SAVE/OPEN переносят всю песню с доступным аудио в `.sidproject.json`; SAVE PATCH — только rack.
 
-Autosave проекта хранится локально в localStorage, аудио — в IndexedDB того же origin. SAVE PATCH сохраняет только rack. NEW / OPEN / SAVE / SAVE AS переносят всю песню с аудио одним `.sidproject.json` (проверен переносом в чистый профиль). WAV записывает четыре такта живого master в 16-bit stereo; offline render всей песни и stems пока отсутствуют.
+Рабочая область открывается с аранжировки: транспорт сверху, редакторы во вкладках снизу, аудиофайлы/запись справа. SID Rack переключается отдельно. Это первый этап UI-вехи, не завершённый редизайн всех редакторов.
 
-## Структура
-
-- src/main.js — сборка приложения.
-- src/rack/ — управление модульным рэком.
-- src/project/ — project model, history, persistence, musical time/transport.
-- src/tracks/ — track/voice engine, live note routing, recorder UI и inserts.
-- src/arranger/ — timeline, piano roll/drum editing и чистые note transforms.
-- src/audio/ — assets, import, capture, playback и waveform.
-- src/components/ и audio-модули — rack UI и synthesis.
-- tests/ — браузерные наборы и интеграционные проверки.
+WAV захватывает четыре такта живого master, не всю песню offline. Полный микшер/automation/comping — следующие вехи, не готовые возможности. Точная эмуляция SID-чипа и полная cross-browser совместимость не заявляются.
 
 ## Проверка
 
@@ -50,12 +42,10 @@ Autosave проекта хранится локально в localStorage, ау�
 python tests/run-browser-tests.py
 ```
 
-Runner использует установленный Edge и Python stdlib, отдельные временные профили и искусственный вход аудио. Другой путь к Edge передаётся через --browser. Для отдельного набора: python tests/run-browser-tests.py audit-test. Страницы tests/*-test.html можно открыть вручную на локальном сервере; audioInput-test требует доступного тестового входа.
+Требуются Python 3.10+ и установленный Edge; runner работает в отдельных временных профилях, без Node/Puppeteer. Путь браузера — `--browser`, отдельный набор — например `python tests/run-browser-tests.py app-test`.
 
-Node, npm, Puppeteer и сборка не нужны ни приложению, ни основным тестам. Удалены package.json/lock и старые Node runners. Требования: установленный Edge и Python 3.10+ для автоматических проверок, либо обычный статический сервер для ручного запуска страниц.
-
-Старый интеграционный сценарий запускается отдельно: `python tests/run-browser-tests.py integration`. Он использует браузерный iframe, а не внешний harness; его устаревшие ожидания ещё требуют обновления и не входят в основной набор. Запускайте только через runner с временным профилем: сценарий очищает localStorage. Текущие ограничения — в [аудите](docs/AUDIT_2026-09-13.md).
+Legacy integration запускается отдельно и пока содержит известные падения. Команды, результаты последнего прогона и границы проверки — в [справочнике](docs/DEVELOPMENT.md).
 
 ## Лицензия
 
-MIT. Вдохновлено Commodore 64 / MOS SID; точность аппаратной эмуляции не заявляется.
+MIT. Вдохновлено Commodore 64 / MOS SID.

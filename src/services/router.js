@@ -1,3 +1,5 @@
+import { acceptsEditorShortcut } from '../ui/shortcutScope.js';
+
 export function createRouter({ components, masterGain, rack, svgEl, masterPortEl, onMutate }) {
   const connections = [];
   let currentConnectionFrom = null;
@@ -285,6 +287,7 @@ export function createRouter({ components, masterGain, rack, svgEl, masterPortEl
     });
 
     document.addEventListener('keydown', e => {
+      if (!acceptsEditorShortcut(rack, e)) return;
       if (e.key === 'Escape') {
         if (currentConnectionFrom) {
           currentConnectionFrom.port.style.background = '';

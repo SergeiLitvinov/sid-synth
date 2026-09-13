@@ -1,4 +1,5 @@
 import { createProjectSession } from './project/projectSession.js';
+import { createWorkspace } from './ui/workspace.js';
 import { createRackController } from './rack/rackController.js';
 import { resolveNote } from './services/notes.js';
 import { createVisualization } from './services/visualization.js';
@@ -104,6 +105,7 @@ import { createInputUI } from './audio/inputUI.js';
   // Declared early: arranger/piano-roll cfg callbacks below close over it,
   // and createArranger renders synchronously during construction.
   let projectAssets = [];
+  let workspaceUI = null;
 
   // WAV export (backlog #38): bounce the live mix through the master bus.
   const exportWav = (opts = {}) => renderWav({
@@ -120,7 +122,8 @@ import { createInputUI } from './audio/inputUI.js';
   // drives the patterns and project tempo sets the step rate.
   setTransport(transport);
   const recorderUI = recorderEl
-    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history, exportWav, midiApi, transport })
+    ? createRecorderUI({ container: recorderEl, engine: trackEngine, history, exportWav, midiApi, transport,
+        onStateChange: () => workspaceUI?.refreshTarget() })
     : null;
 
   // Linear arranger: ruler + track lanes + playhead on the unified transport.
@@ -172,6 +175,7 @@ import { createInputUI } from './audio/inputUI.js';
           onSelectionChange: (s) => {
             if (s) trackEngine.selectStepClip(s.trackId, s.clipId);
             if (pianoRoll) pianoRoll.setSelection(s);
+            workspaceUI?.showSelection(s);
           },
           getAssetName,
           getAudioPeaks,
@@ -375,4 +379,6 @@ import { createInputUI } from './audio/inputUI.js';
     try { name = window.prompt('Project name', getProjectName()); } catch (e) {}
     if (name) saveBundleAs(name).catch(err => projectStatus('Save failed: ' + (err.message || err)));
   };
+  workspaceUI = createWorkspace({ root: document.querySelector('.container'), transport, engine: trackEngine,
+    onLayout: () => router.drawConnections() });
 })();

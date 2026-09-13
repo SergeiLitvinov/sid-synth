@@ -294,10 +294,10 @@ export function createTransport(cfg = {}) {
   t.onStop = (fn) => { t._onStop.push(fn); };
   t.onPause = (fn) => { t._onPause.push(fn); };
   t.onResume = (fn) => { t._onResume.push(fn); };
-  t.onTick = (fn) => { t._onTick.push(fn); };
+  t.onTick = (fn) => { t._onTick.push(fn); return () => { t._onTick = t._onTick.filter(f => f !== fn); }; };
   t.onLoopWrap = (fn) => { t._onLoopWrap.push(fn); };
   t.onSeek = (fn) => { t._onSeek.push(fn); };
-  t.onStateChange = (fn) => { t._onStateChange.push(fn); };
+  t.onStateChange = (fn) => { t._onStateChange.push(fn); return () => { t._onStateChange = t._onStateChange.filter(f => f !== fn); }; };
   t.onMetronomeBeat = (fn) => { t._onMetronomeBeat.push(fn); return () => { t._onMetronomeBeat = t._onMetronomeBeat.filter(f => f !== fn); }; };
 
   // Test hooks: override the clock and drive passes manually.

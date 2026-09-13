@@ -20,6 +20,7 @@
 
 import { pianoRows, pianoSteps, layoutPianoNotes, layoutVelocityBars, noteToMidi, midiToNote, DEFAULT_LOW_MIDI, DEFAULT_HIGH_MIDI } from './pianoRollLayout.js';
 import { quantizeStart } from './quantize.js';
+import { acceptsEditorShortcut } from '../ui/shortcutScope.js';
 import { transposeEvents } from './transpose.js';
 import { duplicateEvents } from './duplicate.js';
 import { legatoEvents } from './legato.js';
@@ -262,6 +263,13 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   hPrev.addEventListener('click', onHumanizePreview);
   hrow.append(hName, hTiming, hVel, hApply, hPrev);
   el.append(hrow);
+
+  const transforms = document.createElement('details');
+  transforms.className = 'pr-transforms';
+  const transformsTitle = document.createElement('summary');
+  transformsTitle.textContent = 'Обработка нот и подсказки · Quantize / Transpose / Legato';
+  transforms.append(transformsTitle, qrow, trow, lrow, frow, hrow, hint);
+  el.append(transforms);
 
   const gridWrap = document.createElement('div');
   gridWrap.className = 'pr-wrap';
@@ -1162,6 +1170,7 @@ export function createPianoRoll({ container, engine, transport, history, getAsse
   // beats the arranger's clip-delete handler — and only acts while a note
   // selection exists, so clip deletion still works otherwise.
   window.addEventListener('keydown', (e) => {
+    if (!acceptsEditorShortcut(container, e)) return;
     const tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 

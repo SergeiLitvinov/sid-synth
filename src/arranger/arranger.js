@@ -7,6 +7,7 @@ import { computeRuler, contentWidthTicks, layoutTrackBlocks, layoutClips, layout
 import { addClipCommand, moveClipCommand, splitClipCommand, duplicateClipCommand, repeatClipCommand, moveClipsCommand, removeClipsCommand, setTrackFlagCommand, renameTrackCommand, reorderTrackCommand, updateTrackCommand, resizeTrackCommand, crossfadeClipsCommand } from '../project/trackCommands.js';
 import { drawWaveform } from '../audio/waveform.js';
 import { stepTicks } from '../project/clipEvents.js';
+import { acceptsEditorShortcut } from '../ui/shortcutScope.js';
 import { addMarkerCommand, removeMarkerCommand } from '../project/markerCommands.js';
 
 const DEFAULT_ZOOM = 48;      // px per quarter note
@@ -938,6 +939,7 @@ export function createArranger({ container, engine, transport, history, markers,
 
   // Delete removes all selected clips through the command history (undoable).
   document.addEventListener('keydown', (e) => {
+    if (!acceptsEditorShortcut(el, e)) return;
     // Don't edit when the user is typing into an input/select.
     const tag = (e.target && e.target.tagName) || '';
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;

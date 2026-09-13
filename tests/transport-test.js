@@ -681,6 +681,18 @@ check('getState includes metronomeEnabled', () => {
   return 'metronomeEnabled' in s && s.metronomeEnabled === true;
 });
 
+check('workspace tick and state subscriptions can be released', () => {
+  const t = createTransport();
+  let ticks = 0, states = 0;
+  const offTick = t.onTick(() => ticks++);
+  const offState = t.onStateChange(() => states++);
+  t.seek(120);
+  offTick(); offState();
+  t.seek(240);
+  t.stop();
+  return ticks === 1 && states === 1;
+});
+
 summary.textContent = `${passed.length} passed, ${failed.length} failed`;
 if (failed.length) summary.className = 'fail';
 window.__testResults = { passed: passed.length, failed: failed.length };
