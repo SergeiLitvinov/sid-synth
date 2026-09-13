@@ -10,6 +10,7 @@
 // attempt is recorded in a bounded journal. Subscribers get save-state
 // transitions (dirty/saved/error) for the save-status line.
 import { migrateProject, fromLegacy } from './migrate.js';
+import { validateProject } from './serialize.js';
 
 export const PROJECT_STORAGE_KEY = 'sidSynthProject';
 export const LEGACY_AUTOSAVE_KEY = 'sidSynthAutosave';
@@ -93,11 +94,15 @@ export function createProjectStore(cfg = {}) {
     timer = null;
     if (!capture || blocked) return false;
     let doc;
-    try { doc = capture(); }
+    try {
+      doc = capture();
+      // Validate project before serialization to catch invalid state early
+      validateProject(doc);
+    }
     catch (e) {
       lastError = e;
       saveState = 'error';
-      logJournal({ result: 'error', detail: 'capture: ' + (e.message || e) });
+      logJournal({ result: 'error', detail: 'capture/validate: ' + (e.message || e) });
       onError(e);
       notify();
       return false;
@@ -186,7 +191,12 @@ export function createProjectStore(cfg = {}) {
   function readProject() {
     const raw = read(storageKey);
     if (raw) {
-      try { return migrateProject(JSON.parse(raw)); }
+      try {
+        const project = migrateProject(JSON.parse(raw));
+        // Validate after migration to ensure loaded data is valid
+        validateProject(project);
+        return project;
+      }
       catch (e) {
         // Never replace unreadable/newer data with an empty startup session.
         blocked = true;

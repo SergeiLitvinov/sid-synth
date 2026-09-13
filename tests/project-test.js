@@ -93,6 +93,8 @@ check('connections serialize with toChannel/outChannel', () => {
 
 check('mod connections are marked', () => {
   const st = fixtureState();
+  // Add lfo_1 component before adding mod connection from it
+  st.components.lfo_1 = { type: 'lfo', element: { style: { left: '200px', top: '100px' } }, waveform: 'sine', frequency: 1, depth: 50 };
   st.connections.push({ from: 'lfo_1', to: 'oscillator_1', mod: true });
   const p = serializeProject(st);
   return p.rack.connections.some(c => c.mod === true);

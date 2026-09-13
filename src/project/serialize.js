@@ -12,13 +12,74 @@ export function validateProject(p) {
   if (typeof p.schemaVersion !== 'number') throw new Error('missing schemaVersion');
   if (p.schemaVersion > SCHEMA_VERSION) throw new Error('unsupported schemaVersion ' + p.schemaVersion);
   if (typeof p.name !== 'string') throw new Error('missing project name');
-  if (typeof p.tempo !== 'number' || !(p.tempo > 0)) throw new Error('invalid tempo');
+  if (typeof p.tempo !== 'number' || !(p.tempo > 0) || !Number.isFinite(p.tempo)) throw new Error('invalid tempo');
   if (!p.rack || typeof p.rack !== 'object') throw new Error('missing rack');
   if (!Array.isArray(p.rack.components)) throw new Error('rack.components must be an array');
   if (!Array.isArray(p.rack.connections)) throw new Error('rack.connections must be an array');
   if (!Array.isArray(p.tracks)) throw new Error('tracks must be an array');
   if (p.markers !== undefined && !Array.isArray(p.markers)) throw new Error('markers must be an array');
   if (p.assets !== undefined && !Array.isArray(p.assets)) throw new Error('assets must be an array');
+  
+  // Validate unique component IDs
+  const componentIds = new Set();
+  for (const c of p.rack.components) {
+    if (c.id && componentIds.has(c.id)) throw new Error('duplicate component id: ' + c.id);
+    componentIds.add(c.id);
+  }
+  
+  // Validate unique track IDs
+  const trackIds = new Set();
+  for (const t of p.tracks) {
+    if (t.id && trackIds.has(t.id)) throw new Error('duplicate track id: ' + t.id);
+    trackIds.add(t.id);
+  }
+  
+  // Validate unique marker IDs
+  if (p.markers) {
+    const markerIds = new Set();
+    for (const m of p.markers) {
+      if (m.id && markerIds.has(m.id)) throw new Error('duplicate marker id: ' + m.id);
+      markerIds.add(m.id);
+    }
+  }
+  
+  // Validate connection references
+  for (const conn of p.rack.connections) {
+    if (conn.from && !componentIds.has(conn.from)) {
+      throw new Error('connection from non-existent component: ' + conn.from);
+    }
+    if (conn.to && conn.to !== 'master' && !componentIds.has(conn.to)) {
+      throw new Error('connection to non-existent component: ' + conn.to);
+    }
+  }
+  
+  // Validate activeTrackId reference
+  if (p.activeTrackId !== null && p.activeTrackId !== undefined) {
+    if (!trackIds.has(p.activeTrackId)) {
+      throw new Error('activeTrackId points to non-existent track: ' + p.activeTrackId);
+    }
+  }
+  
+  // Validate loop bounds
+  if (typeof p.loopStartTicks === 'number') {
+    if (p.loopStartTicks < 0) throw new Error('loopStartTicks must be >= 0');
+    if (typeof p.loopEndTicks === 'number' && p.loopEndTicks <= p.loopStartTicks) {
+      throw new Error('loopEndTicks must be > loopStartTicks');
+    }
+  }
+  
+  // Validate asset references in clips
+  const assetHashes = new Set((p.assets || []).map(a => a.hash));
+  for (const t of p.tracks) {
+    if (t.clips) {
+      for (const c of t.clips) {
+        if (c.audio && c.audio.hash && !assetHashes.has(c.audio.hash)) {
+          throw new Error('clip audio references missing asset: ' + c.audio.hash);
+        }
+      }
+    }
+  }
+  
   return true;
 }
 
@@ -33,6 +94,54 @@ export function validateTrack(t) {
   if (!t || typeof t !== 'object') throw new Error('track must be an object');
   if (typeof t.id !== 'string' || !t.id) throw new Error('track missing id');
   if (t.clips !== undefined && !Array.isArray(t.clips)) throw new Error('track ' + t.id + ' clips must be an array');
+  
+  // Validate volume range [0, 1]
+  if (typeof t.volume === 'number' && (t.volume < 0 || t.volume > 1)) {
+    throw new Error('track ' + t.id + ' volume out of range [0, 1]: ' + t.volume);
+  }
+  
+  // Validate ADSR parameters
+  if (t.adsr && typeof t.adsr === 'object') {
+    if (typeof t.adsr.a === 'number' && t.adsr.a < 0) {
+      throw new Error('track ' + t.id + ' ADSR attack must be >= 0');
+    }
+    if (typeof t.adsr.s === 'number' && (t.adsr.s < 0 || t.adsr.s > 1)) {
+      throw new Error('track ' + t.id + ' ADSR sustain out of range [0, 1]');
+    }
+  }
+  
+  // Validate filter frequency
+  if (typeof t.filterFreq === 'number' && t.filterFreq < 0) {
+    throw new Error('track ' + t.id + ' filterFreq must be >= 0');
+  }
+  
+  // Validate clip events
+  if (t.clips) {
+    for (const clip of t.clips) {
+      if (clip.events && Array.isArray(clip.events)) {
+        for (const ev of clip.events) {
+          if (ev.start !== undefined && (typeof ev.start !== 'number' || !Number.isFinite(ev.start))) {
+            throw new Error('clip event has invalid start: ' + ev.start);
+          }
+          if (ev.dur !== undefined && (typeof ev.dur !== 'number' || ev.dur < 0)) {
+            throw new Error('clip event has negative duration: ' + ev.dur);
+          }
+        }
+      }
+    }
+  }
+  
+  // Validate unique insert IDs within track
+  if (t.inserts && Array.isArray(t.inserts)) {
+    const insertIds = new Set();
+    for (const ins of t.inserts) {
+      if (ins.id && insertIds.has(ins.id)) {
+        throw new Error('duplicate insert id in track ' + t.id + ': ' + ins.id);
+      }
+      insertIds.add(ins.id);
+    }
+  }
+  
   return true;
 }
 
