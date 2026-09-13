@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SID Synth — Project Validation Tests</title>
+  <style>
+    body { font-family: monospace; background: #0d120d; color: #4af74a; padding: 20px; }
+    #results li.fail { color: #ff4444; }
+    #results li.pass { color: #4af74a; }
+    #summary { margin-top: 16px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>SID SYNTH — PROJECT VALIDATION TESTS (TDD for PR #1)</h1>
+  <p>Testing comprehensive project validation: finite numbers, ranges, unique IDs, references, schema version.</p>
+  <ul id="results"></ul>
+  <div id="summary"></div>
+  <script type="module" src="./project-validation-test.js"></script>
+</body>
+</html>

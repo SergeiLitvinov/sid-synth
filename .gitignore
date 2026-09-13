@@ -1,17 +1,12 @@
-.venv/
+```
+# Dependencies
 node_modules/
-*.pyc
-__pycache__/
 
-# Backup artifacts
-*.bak
-*.old
-
-# Playwright MCP artifacts
-.playwright-mcp/
-
-# Server logs
+# Logs and temp files
 *.log
-*.log.err
-server.log
-server_stderr.txt
+*.tmp
+
+# Environment
+.env
+.env.
+```
