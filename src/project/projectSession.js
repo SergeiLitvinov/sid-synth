@@ -9,9 +9,12 @@ export function createProjectSession({
 }) {
   let projectId = null;
   let projectName = 'SID Project';
+  let createdAt = new Date().toISOString();
+  let modifiedAt = createdAt;
+  let lastContent = null;
   function captureProject() {
     if (!projectId) projectId = createProjectId();
-    return serializeProject({
+    const project = serializeProject({
       components,
       connections: router.connections,
       captureParams,
@@ -22,12 +25,19 @@ export function createProjectSession({
       markers: markers.getMarkers(),
       id: projectId,
       name: projectName,
+      createdAt, modifiedAt,
       loopEnabled: transport.loopEnabled,
       loopStartTicks: transport.loopStartTicks,
       loopEndTicks: transport.loopEndTicks,
       projectEndTicks: transport.projectEndTicks,
       assets: getAssets(),
     });
+    const { createdAt: ignoredCreated, modifiedAt: ignoredModified, ...content } = project;
+    const fingerprint = JSON.stringify(content);
+    if (lastContent !== null && fingerprint !== lastContent) modifiedAt = new Date().toISOString();
+    lastContent = fingerprint;
+    project.modifiedAt = modifiedAt;
+    return project;
   }
 
   function prepareProject(input) {
@@ -50,6 +60,9 @@ export function createProjectSession({
           rack.commit();
           projectId = project.id;
           projectName = project.name;
+          createdAt = project.createdAt;
+          modifiedAt = project.modifiedAt;
+          lastContent = null;
           setAssets(project.assets);
           trackEngine.playbackMode = project.playbackMode;
           trackEngine.bpm = project.tempo;

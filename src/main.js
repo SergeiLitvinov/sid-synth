@@ -341,7 +341,7 @@ import { createInputUI } from './audio/inputUI.js';
   const projFile = document.getElementById('projFile');
   if (projNew) projNew.onclick = () => {
     if (!confirmDiscard()) return;
-    applyProject(defaultProject());
+    applyProject(defaultProject({ playbackMode: 'song' }));
     projectStore.saveNow();
     history.reset();
     history.markSaved();
@@ -354,9 +354,9 @@ import { createInputUI } from './audio/inputUI.js';
       const file = projFile.files && projFile.files[0];
       projFile.value = '';
       if (!file) return;
+      if (!confirmDiscard()) return;
       (async () => {
         const { project, imported, skipped } = await importBundle(await readFileText(file), { store: assetStore });
-        if (!confirmDiscard()) return;
         applyProject(project);
         projectStore.saveNow();
         history.reset();

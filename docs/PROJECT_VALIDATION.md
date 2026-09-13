@@ -24,20 +24,12 @@ Store restore reports an apply failure and blocks overwriting the saved document
 
 ## Verification
 
-Run the reproducible DOM-free model checks with Node (tested on Node 24):
+Node/Puppeteer runners were removed in the 2026-09-13 audit. Run all model, browser UI and audio suites with Python stdlib and installed Edge:
 
 ```sh
-node tests/run-model-tests.mjs
+python tests/run-browser-tests.py
 ```
 
-411/411 pass: project 95, project-validation 36, projectStore 22, projectSession 11, audit 16, track 161, song 21, history 28, clipEvents 21.
+For a targeted check: `python tests/run-browser-tests.py project-test project-validation-test projectSession-test rackProject-test`.
 
-`rackProject-test` additionally passes 5/5 with a temporary minimal DOM harness and the existing mock AudioContext: detached preparation, pitch preservation, master disconnect, failed constructor cleanup and LFO waveform restoration. This is not a real browser test.
-
-Browser suite entry points are `tests/projectSession-test.html` and `tests/rackProject-test.html`; both are automatically included by the existing Python browser runner. With Edge/Chrome installed:
-
-```sh
-python tests/run-browser-tests.py --browser /path/to/browser
-```
-
-The full browser/UI/real-Web-Audio run is outstanding. The initial Playwright Chromium download timed out. After rebasing, Puppeteer from the new package.json supplied Chrome 148, but launching it failed because the execution sandbox denies its process-singleton socket (Operation not permitted). An exploratory Node run of the unchanged transport browser suite fails the pause/resume exact wall-clock tick-position assertion; it is not included in the DOM-free runner and no transport changes are made here. The TODO remains unchecked until the browser gate passes, including repeated Open/New, failed import while playing, media transfer and audio routing after loading.
+No npm install, browser download or bundler is required. Results and remaining atomicity/parameter-coverage limitations are tracked in [the current audit](AUDIT_2026-09-13.md). Mock and offline audio checks do not establish hardware MIDI/audio reliability.

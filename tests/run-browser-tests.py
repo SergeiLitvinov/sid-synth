@@ -14,6 +14,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = {}
 
 
+class TestServer(http.server.ThreadingHTTPServer):
+    # Module graphs open many simultaneous connections on cold profiles.
+    request_queue_size = 128
+    daemon_threads = True
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         name = self.path.removeprefix('/__results/')
@@ -34,15 +40,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('suites', nargs='*')
+    parser.add_argument('--jobs', type=int, default=1, choices=range(1, 5))
     parser.add_argument('--browser', default=r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe')
     args = parser.parse_args()
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Handler, directory=str(ROOT)))
+    server = TestServer(('127.0.0.1', 0), functools.partial(Handler, directory=str(ROOT)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     names = args.suites or [p.stem for p in sorted((ROOT / 'tests').glob('*-test.html'))] + ['smoke']
 
     def run(name):
         with tempfile.TemporaryDirectory(prefix='sid-browser-') as profile:
             command = [args.browser, '--headless=new', '--disable-gpu', '--no-first-run',
+                       '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+                       '--disable-backgrounding-occluded-windows',
                        '--disable-extensions', '--no-default-browser-check',
                        '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream',
                        '--autoplay-policy=no-user-gesture-required', '--disable-background-networking',
@@ -52,7 +61,7 @@ def main():
             process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             try:
-                data = RESULTS[name].get(timeout=48)
+                data = RESULTS[name].get(timeout=190 if name == 'integration' else 48)
                 summary = data.get('summary') or ''
                 failures = data.get('failures') or []
                 ok = bool(summary) and not failures
@@ -64,7 +73,7 @@ def main():
                 process.wait(timeout=10)
 
     try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
             rows = list(pool.map(run, names))
         for name, ok, summary, failures in rows:
             print(('PASS' if ok else 'FAIL') + ' ' + name + ': ' + (summary or 'No completed summary'), flush=True)

@@ -1,5 +1,5 @@
 // Piano Roll Transformations Test Suite (PR #2)
-// Tests for refactored transformation modules extracted from pianoRoll.js god object
+// Contract tests for existing pure helpers; this suite does not refactor pianoRoll.js.
 
 const results = document.getElementById('results');
 const summary = document.getElementById('summary');
@@ -26,7 +26,7 @@ function test(name, fn) {
 
 import { quantizeStart, quantizeEvents } from '../src/arranger/quantize.js';
 import { transposeEvents } from '../src/arranger/transpose.js';
-import { duplicateEvents } from '../src/arranger/duplicate.js';
+import { duplicateEvents, duplicateOffset } from '../src/arranger/duplicate.js';
 import { legatoEvents } from '../src/arranger/legato.js';
 import { fixedLengthEvents } from '../src/arranger/fixedLength.js';
 import { humanizeEvents } from '../src/arranger/humanize.js';
@@ -60,15 +60,15 @@ test('quantizeStart: partial strength blends original and snapped', () => {
 
 test('quantizeStart: swing delays every second step', () => {
   const step = Math.max(1, (PPQ / 4) * Math.max(1, Math.round(1)));
-  const step1 = quantizeStart(step, { ppq: PPQ, grid: 1, strength: 100, swing: 0 });
+  const step1 = quantizeStart(step, { ppq: PPQ, grid: 1, strength: 100, swing: 50 });
   const step2 = quantizeStart(step * 2, { ppq: PPQ, grid: 1, strength: 100, swing: 50 });
   // Second step should be delayed by 50% of step duration
-  return step2 > step1 + step;
+  return step1 === 180 && step2 === 240;
 });
 
-test('quantizeStart: grid=0 means no quantization', () => {
+test('quantizeStart: strength=0 preserves the original start', () => {
   const original = 100;
-  const result = quantizeStart(original, { ppq: PPQ, grid: 0, strength: 100, swing: 0 });
+  const result = quantizeStart(original, { ppq: PPQ, grid: 1, strength: 0, swing: 0 });
   return result === original;
 });
 
@@ -93,11 +93,11 @@ test('transposeEvents: shifts all notes by semitones', () => {
          result[2].note === 'A3';
 });
 
-test('transposeEvents: clamps to valid MIDI range', () => {
+test('transposeEvents: clamps to the default editor range', () => {
   const events = [createNote(0, STEP_TICKS, 'C8')];
   const result = transposeEvents(events, 12);
   // C8 + 12 semitones would be invalid, should clamp to highest valid note
-  return result[0].note.charCodeAt(1) <= '8'.charCodeAt(0);
+  return result[0].note === 'B4';
 });
 
 test('transposeEvents: preserves velocity and duration', () => {
@@ -145,9 +145,9 @@ test('duplicateOffset: calculates phrase span correctly', () => {
     createNote(STEP_TICKS * 4, STEP_TICKS * 2, 'E3')
   ];
   // Span = (4+2) - 0 = 6 steps
-  const offset = duplicateEvents.duplicateOffset ? duplicateEvents.duplicateOffset(events, { stepTicks: STEP_TICKS }) : 0;
+  const offset = duplicateOffset(events, { stepTicks: STEP_TICKS });
   // Just verify it's positive and reasonable
-  return offset > 0;
+  return offset === 720;
 });
 
 // ============ LEGATO TESTS ============
@@ -170,7 +170,7 @@ test('legatoEvents: handles overlapping notes', () => {
     createNote(STEP_TICKS * 2, STEP_TICKS, 'E3')
   ];
   const result = legatoEvents(events);
-  return result[0].dur === STEP_TICKS * 2; // Extended to next note start
+  return result[0] === events[0] && result[0].dur === STEP_TICKS * 3; // Legato extends, never shortens.
 });
 
 // ============ FIXED LENGTH TESTS ============
@@ -181,7 +181,7 @@ test('fixedLengthEvents: sets all notes to snap grid duration', () => {
     createNote(STEP_TICKS, STEP_TICKS * 2, 'E3'),
     createNote(STEP_TICKS * 2, STEP_TICKS / 2, 'G3')
   ];
-  const result = fixedLengthEvents(events, STEP_TICKS);
+  const result = fixedLengthEvents(events, { ppq: PPQ, grid: 1 });
   return result.every(e => e.dur === STEP_TICKS);
 });
 
@@ -190,7 +190,7 @@ test('fixedLengthEvents: preserves start times', () => {
     createNote(0, STEP_TICKS, 'C3'),
     createNote(STEP_TICKS * 2, STEP_TICKS, 'E3')
   ];
-  const result = fixedLengthEvents(events, STEP_TICKS);
+  const result = fixedLengthEvents(events, { ppq: PPQ, grid: 1 });
   return result[0].start === 0 && result[1].start === STEP_TICKS * 2;
 });
 
@@ -198,9 +198,9 @@ test('fixedLengthEvents: preserves start times', () => {
 
 test('humanizeEvents: adds random timing offsets', () => {
   const events = [createNote(0, STEP_TICKS, 'C3', 100)];
-  const result = humanizeEvents(events, { timing: 10, velocity: 0 });
+  const result = humanizeEvents(events, { timing: 10, velocity: 0, random: () => 1 });
   // Timing should be offset by up to 10 ticks
-  return Math.abs(result[0].start) <= 10;
+  return result[0].start === 12;
 });
 
 test('humanizeEvents: adds random velocity offsets', () => {
@@ -218,32 +218,21 @@ test('humanizeEvents: clamps velocity to 1-127', () => {
 
 // ============ PREVIEW TESTS ============
 
-test('previewEvents: returns copy of events for audition', () => {
+test('previewEvents: schedules once without mutating source', () => {
   const events = [createNote(0, STEP_TICKS, 'C3', 100)];
-  const result = previewEvents(events);
-  return result.length === 1 && result !== events;
+  const calls = [];
+  const before = JSON.stringify(events);
+  const result = previewEvents(events, { schedule: (...args) => calls.push(args) });
+  return result === 1 && calls.length === 1 && JSON.stringify(events) === before;
 });
 
 test('previewEvents: preserves all event properties', () => {
   const events = [createNote(0, STEP_TICKS * 2, 'C3', 80)];
-  const result = previewEvents(events);
-  return result[0].start === 0 && 
-         result[0].dur === STEP_TICKS * 2 && 
-         result[0].note === 'C3' && 
-         result[0].velocity === 80;
+  const calls = [];
+  previewEvents(events, { schedule: (...args) => calls.push(args) });
+  return JSON.stringify(calls) === JSON.stringify([['C3', 80, 0.25, 0.06]]);
 });
 
 console.log('Piano Roll Transform Tests Complete');
 
-// Display summary
-setTimeout(() => {
-  const sum = document.createElement('div');
-  sum.id = 'summary';
-  sum.textContent = `Results: ${passed.length} passed, ${failed.length} failed`;
-  if (failed.length > 0) {
-    sum.style.color = 'red';
-  } else {
-    sum.style.color = 'green';
-  }
-  document.getElementById('summary').appendChild(sum);
-}, 100);
+summary.textContent = `Results: ${passed.length} passed, ${failed.length} failed`;

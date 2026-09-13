@@ -30,7 +30,8 @@ export function normalizeAsset(a) {
     sampleRate: typeof src.sampleRate === 'number' && src.sampleRate > 0 ? src.sampleRate : base.sampleRate,
     channels: typeof src.channels === 'number' && src.channels > 0 ? Math.floor(src.channels) : base.channels,
     duration: typeof src.duration === 'number' && src.duration >= 0 ? src.duration : base.duration,
-    createdAt: typeof src.createdAt === 'string' ? src.createdAt : base.createdAt,
+    // Unknown import date stays unknown; normalization must not change each capture.
+    createdAt: typeof src.createdAt === 'string' ? src.createdAt : '',
   };
 }
 

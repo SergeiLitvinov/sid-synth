@@ -9,7 +9,7 @@ function check(name, ok) {
 }
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) {
-  for (let i = 0; i < 100; i++) { if (fn()) return true; await wait(50); }
+  for (let i = 0; i < 600; i++) { if (fn()) return true; await wait(50); }
   return false;
 }
 const frame = document.createElement('iframe');

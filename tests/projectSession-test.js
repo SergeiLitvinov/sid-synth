@@ -28,6 +28,17 @@ function fixture() {
     snapshot: () => JSON.stringify({ tracks: engine.getTracks(), tempo: engine.bpm, active: engine.activeTrackId, assets, markers: markers.getMarkers(), transport }),
   };
 }
+await check('unchanged real session captures retain metadata and revision input', async () => {
+  const f = fixture();
+  const first = f.session.captureProject();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const second = f.session.captureProject();
+  const unchanged = JSON.stringify(first) === JSON.stringify(second);
+  f.engine.updateTrack('old', { name: 'Renamed' });
+  const third = f.session.captureProject();
+  f.engine.dispose();
+  return unchanged && third.createdAt === first.createdAt && third.modifiedAt !== first.modifiedAt;
+});
 for (const [name, mutate] of [
   ['duplicate tracks', p => p.tracks = [{ id: 'new' }, { id: 'new' }]],
   ['invalid number', p => p.tempo = Infinity],

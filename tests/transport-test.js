@@ -494,7 +494,7 @@ check('pause keeps position and stops; getState reports paused', () => {
   return ok;
 });
 check('play after pause resumes without onStart', () => {
-  const t = createTransport({ bpm: 120 });
+  const t = createTransport({ bpm: 120, nowMs: () => 0 });
   let starts = 0;
   let resumes = 0;
   t.onStart(() => starts++);

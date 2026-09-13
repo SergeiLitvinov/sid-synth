@@ -1,7 +1,7 @@
 // E2E integration test for SID Synth.
 // Runs against the live app (dev server: http://127.0.0.1:3000 via serve.ps1,
 // or http://127.0.0.1:3100 via tests/serve-ps.ps1) using a browser-automation
-// harness (Playwright MCP): `async (page) => {...}`. Exercises the real
+// harness in integration-browser.js (ordinary browser iframe, no Node). Exercises the real
 // main.js: drag&drop rack, patch routing, modulation cables, keyboard,
 // patch save/load round-trip, cable deletion, presets (built-in + localStorage),
 // the recorder panel (tracks, grid, transport, realtime capture, undo/redo),
@@ -53,7 +53,7 @@
 // backlog M4: take recording (worklet capture, REC button).
 // backlog M4: punch in/out + count-in.
 // 249 steps total.
-async (page) => {
+export default async (page) => {
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await page.waitForTimeout(800);

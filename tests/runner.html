@@ -8,16 +8,26 @@
     const suite = new URLSearchParams(location.search).get('suite');
     if (suite && /^[a-zA-Z0-9-]+$/.test(suite)) {
       const frame = document.createElement('iframe');
+      const errors = [];
+      window.addEventListener('message', event => {
+        if (event.source === frame.contentWindow && event.data?.testError) errors.push('FAIL ' + event.data.testError);
+      });
       frame.src = './' + suite + '.html';
+      frame.style.cssText = 'width:1400px;height:1000px';
+      frame.onload = () => {
+        frame.contentWindow.addEventListener('error', e => errors.push('FAIL ' + e.message));
+        frame.contentWindow.addEventListener('unhandledrejection', e => errors.push('FAIL ' + String(e.reason)));
+      };
       document.body.append(frame);
       const started = performance.now();
       const timer = setInterval(async () => {
         const doc = frame.contentDocument;
         const summary = doc?.getElementById('summary')?.textContent.trim();
-        if (!summary && performance.now() - started < 40000) return;
+        if (!summary && !errors.length && performance.now() - started < (suite === 'integration' ? 180000 : 40000)) return;
         clearInterval(timer);
         const failures = [...(doc?.querySelectorAll('#results li') || [])]
-          .map(el => el.textContent).filter(text => text.startsWith('FAIL'));
+          .map(el => el.textContent).filter(text => text.startsWith('FAIL')).concat(errors);
+        if (!summary) failures.push('FAIL no completed summary: ' + (doc?.URL || 'no document') + ' — ' + (doc?.body?.textContent || '').slice(-1200));
         document.getElementById('summary').textContent = summary || 'Timed out';
         await fetch('/__results/' + suite, { method: 'POST', body: JSON.stringify({ summary, failures }) });
       }, 100);

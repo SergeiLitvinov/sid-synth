@@ -41,7 +41,7 @@ export function validateTrack(t) {
 // Build a versioned project document from live app state. `components` is a map
 // id -> {type, element, ...params} and captureParams(comp) extracts params.
 // `tracks` is the plain-data array from trackEngine.getTracks().
-export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks, assets, playbackMode }) {
+export function serializeProject({ components, connections, captureParams, tracks, tempo, activeTrackId, id, name, createdAt, modifiedAt, markers, loopEnabled, loopStartTicks, loopEndTicks, projectEndTicks, assets, playbackMode }) {
   const rackComponents = Object.keys(components || {}).map(cid => {
     const comp = components[cid];
     return {
@@ -60,7 +60,7 @@ export function serializeProject({ components, connections, captureParams, track
     ...(c.mod ? { mod: true } : {}),
   }));
   const project = defaultProject({
-    id, name, tempo, activeTrackId, playbackMode,
+    id, name, createdAt, modifiedAt, tempo, activeTrackId, playbackMode,
     rackComponents,
     rackConnections,
     tracks: (tracks || []).map(normalizeTrackData),
